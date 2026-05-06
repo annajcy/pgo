@@ -1,7 +1,12 @@
+{% set sys = platform.system() %}
+
+{% if sys == "Darwin" %}
+include(macos-arm64-apple-clang)
+{% elif sys == "Linux" %}
+include(ubuntu-x86_64-gcc)
+{% elif sys == "Windows" %}
+include(windows-x86_64-msvc)
+{% else %}
 [settings]
-arch=armv8
-compiler=apple-clang
-compiler.cppstd=gnu17
-compiler.libcxx=libc++
-compiler.version=17.0
-os=Macos
+os={{ sys }}
+{% endif %}

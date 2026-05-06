@@ -13,3 +13,4 @@ CMakeUserPresets.json
 __pycache__/
 frames/
 *.abc
+plan/
