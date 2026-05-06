@@ -1,0 +1,8 @@
+option(PGO_BUILD_TESTS "Build pgo tests" ON)
+option(PGO_BUILD_EXAMPLES "Build pgo examples" ON)
+option(PGO_BUILD_C_API "Build C99 shared-library API" ON)
+option(PGO_ENABLE_SANITIZERS "Enable address and undefined behavior sanitizers" OFF)
+option(PGO_WARNINGS_AS_ERRORS "Treat warnings as errors" OFF)
+option(PGO_ENABLE_GPU "Enable GPU backend targets" OFF)
+option(PGO_ENABLE_VULKAN "Enable Vulkan backend targets" OFF)
+option(PGO_ENABLE_SLANG "Enable Slang shader targets" OFF)

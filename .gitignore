@@ -1,0 +1,15 @@
+build/
+.cache/
+.DS_Store
+compile_commands.json
+CMakeUserPresets.json
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+*.pyc
+__pycache__/
+frames/
+*.abc
