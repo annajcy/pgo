@@ -16,7 +16,7 @@
 - Current position 只通过 `x = X + u` 得到，其中 `X` 是 immutable rest position。
 - Rest positions `X` 和 topology 属于 `geometry::RestMesh<T, Dim>`。
 - Mesh storage 使用 flat scalar/index arrays：positions 长度为 `num_vertices * Dim`，topology 使用 index buffer。
-- Eigen 只通过 `pgo::math` facade 用于 CPU 数值计算和 sparse solve；`geometry/` 与 `storage/` 不存储 `Eigen::Vector3d`、`Eigen::MatrixXd` 等对象。
+- Eigen 只通过 `pgo::math::eigen::EigenBackend` 和 `pgo::math` 默认 aliases 用于 CPU 数值计算和 sparse solve；`geometry/` 与 `storage/` 不存储 `Eigen::Vector3d`、`Eigen::MatrixXd` 等对象。
 - 不引入 `fmt` 第三方依赖；需要格式化字符串时使用标准库 `<format>` / `std::format`。核心库应尽量少做格式化，C API 错误消息用固定 buffer 写入。
 - Energy model 必须暴露 local contribution API，使 CPU assembly 和未来 GPU kernel 能共享同一语义边界。
 - Milestone 1 只实现 CPU assembly、CPU Newton solver、OBJ input/output、C99 ABI facade。
@@ -54,7 +54,6 @@
         local_matrix.hpp
       base/
         assert.hpp
-        macros.hpp
       dof/
         dirichlet_boundary.hpp
         displacement.hpp
@@ -72,9 +71,10 @@
         obj_frame_writer.hpp
         obj_reader.hpp
       math/
+        backend.hpp
+        eigen_backend.hpp
         finite_difference.hpp
-        sparse.hpp
-        types.hpp
+        scalar.hpp
       solver/
         line_search.hpp
         newton_solver.hpp
@@ -96,12 +96,23 @@
     mass_spring_cloth.cpp
   tests/
     CMakeLists.txt
-    test_c_api.c
-    test_dof.cpp
-    test_finite_difference.cpp
-    test_mass_spring_energy.cpp
-    test_obj_io.cpp
-    test_solver.cpp
+    base/
+      test_assert.cpp
+    dof/
+      test_dof.cpp
+    energy/
+      test_mass_spring_energy.cpp
+    geometry/
+      test_rest_mesh.cpp
+    io/
+      test_obj_io.cpp
+    math/
+      test_backend.cpp
+      test_finite_difference.cpp
+    pgo_c/
+      test_c_api.c
+    solver/
+      test_solver.cpp
   tools/
     obj_frames_to_abc.py
   .github/
@@ -160,12 +171,6 @@ frames/
 plan/
 ```
 
-- [x] **Step 3: 提交**
-
-```bash
-git add .gitignore
-git commit -m "chore: initialize repository ignores"
-```
 
 ### Task 0.2: 添加 Conan 2 recipe 和仓库内 profiles（已完成）
 
@@ -251,12 +256,6 @@ conan install . \
 
 期望：生成 `build/conan/release/conan_toolchain.cmake`。
 
-- [x] **Step 5: 提交**
-
-```bash
-git add conanfile.py conan/profiles
-git commit -m "build: add repository conan profile"
-```
 
 ### Task 0.3: 添加现代 CMake skeleton（已完成）
 
@@ -394,12 +393,6 @@ cmake --build --preset release
 
 期望：三个 preset 都 configure/build 成功。Phase 0 尚无 `tests/CMakeLists.txt`，因此此阶段不要求 `ctest`。
 
-- [x] **Step 7: 提交**
-
-```bash
-git add CMakeLists.txt CMakePresets.json cmake
-git commit -m "build: add cmake project skeleton"
-```
 
 ### Task 0.4: 添加 clang-format（已完成）
 
@@ -422,12 +415,6 @@ NamespaceIndentation: None
 SortIncludes: CaseSensitive
 ```
 
-- [x] **Step 2: 提交**
-
-```bash
-git add .clang-format
-git commit -m "style: add clang-format configuration"
-```
 
 ### Task 0.5: 添加 Phase 0 README 和 build-only CI（已完成）
 
@@ -449,89 +436,168 @@ README 使用 `uv tool install conan` / `uv tool install ninja` 管理 Python to
 
 Phase 0 CI 只做 configure/build。等 Phase 1 创建 `tests/CMakeLists.txt` 后，Phase 7 再把 `ctest` 加回 CI。
 
-- [x] **Step 3: 提交**
-
-```bash
-git add README.md .github/workflows/ci.yml
-git commit -m "build: update CI configuration and add Conan profiles"
-```
 
 ## Phase 1: Base、Math、Storage、Geometry、DOF 核心
 
-### Task 1.1: 添加基础 assert/macros
+**执行策略:** Phase 1 不要一口气把 geometry 和 DOF 全塞进去。先做 `base/`、`math/`、`storage/`、`geometry/` 的最小可编译/可测试闭环，跑通 `test_rest_mesh`；然后再进入 DOF/reduced map。这样如果后续出错，问题会落在很小的边界里。
+
+**测试目录和命名空间规范:** `tests/` 下的测试源文件目录要和主代码模块对齐，不把所有测试平铺在 `tests/` 根目录。比如 `include/pgo/math/...` 对应 `tests/math/...`，`include/pgo/geometry/...` 对应 `tests/geometry/...`。C++ 测试文件里的 `TEST`/helper 放在对应模块的 `pgo::<module>::test` 命名空间中。例如 base 测试使用 `namespace pgo::base::test`，math backend 测试使用 `namespace pgo::math::test`，geometry 测试使用 `namespace pgo::geometry::test`。纯 C API 测试 `tests/pgo_c/test_c_api.c` 不适用这个 C++ namespace 规范。
+
+### Task 1.1: 添加基础 assert
 
 **文件:**
 - 创建: `include/pgo/base/assert.hpp`
-- 创建: `include/pgo/base/macros.hpp`
+- 创建/移动: `tests/base/test_assert.cpp`
+- 修改: `tests/CMakeLists.txt`
 
-- [ ] **Step 1: 实现 `pgo::base::require`**
+- [x] **Step 1: 实现 `pgo::base::require`**
 
 `require(condition, message)` 在 condition 为 false 时抛出 `std::runtime_error`。这是 C++ core 内部使用的错误机制，不能越过 C API 边界。
 
-- [ ] **Step 2: 添加 `PGO_NODISCARD` macro**
+如果当前已有根目录平铺的 base assert 测试文件，将它整理到 `tests/base/test_assert.cpp`，并使用 `namespace pgo::base::test`。
 
-`include/pgo/base/macros.hpp` 定义：
 
-```cpp
-#define PGO_NODISCARD [[nodiscard]]
-```
-
-- [ ] **Step 3: 提交**
-
-```bash
-git add include/pgo/base
-git commit -m "feat: add base utilities"
-```
-
-### Task 1.2: 添加 Eigen math facade
+### Task 1.2: 添加 math backend contracts 和 Eigen backend
 
 **文件:**
-- 创建: `include/pgo/math/types.hpp`
-- 创建: `include/pgo/math/sparse.hpp`
+- 创建: `include/pgo/math/scalar.hpp`
+- 创建: `include/pgo/math/eigen_backend.hpp`
+- 创建: `include/pgo/math/backend.hpp`
+- 创建: `tests/math/test_backend.cpp`
+- 修改: `tests/CMakeLists.txt`
 
-- [ ] **Step 1: 定义基础类型别名**
+- [x] **Step 1: 定义 scalar concepts**
 
-`types.hpp` 提供：
+`scalar.hpp` 提供：
 
 ```cpp
 namespace pgo::math {
 template <class T>
-concept Scalar = std::floating_point<T>;
+concept ScalarLike = requires(T a, T b) {
+    T{0};
+    T{1};
+    a + b;
+    a - b;
+    a * b;
+    a / b;
+    -a;
+};
 
-template <Scalar T, int Dim>
-using Vec = Eigen::Matrix<T, Dim, 1>;
+template <class T>
+concept RealScalar = std::floating_point<T>;
+} // namespace pgo::math
+```
 
-template <Scalar T, int Rows, int Cols>
-using Mat = Eigen::Matrix<T, Rows, Cols>;
+设计约束：
 
-template <Scalar T>
-using DVec = Eigen::Matrix<T, Eigen::Dynamic, 1>;
+- `ScalarLike` 用于 local formula、小型向量/矩阵和 energy 表达式，允许 `double`、`float`、Eigen `AutoDiffScalar`，以及未来 Slang/Vulkan 侧的 dual/jet scalar 复刻同一数学形状。
+- `RealScalar` 用于 global sparse assembly、linear solve、line search 这类 Milestone 1 中只支持 real floating-point 的算法。
+- 如果某个 `ScalarLike` 类型需要 Eigen 支持，后续可以为它补 `Eigen::NumTraits<T>` specialization。Milestone 1 只要求 `double` 跑通。
 
-template <Scalar T>
-using DMat = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>;
+- [x] **Step 2: 定义 `EigenBackend`**
+
+`eigen_backend.hpp` 是 Milestone 1 唯一 math backend implementation：
+
+```cpp
+namespace pgo::math::eigen {
+
+struct EigenBackend {
+    template <pgo::math::ScalarLike T, int Dim>
+    using Vec = Eigen::Matrix<T, Dim, 1>;
+
+    template <pgo::math::ScalarLike T, int Rows, int Cols>
+    using Mat = Eigen::Matrix<T, Rows, Cols>;
+
+    template <pgo::math::ScalarLike T>
+    using DVec = Eigen::Matrix<T, Eigen::Dynamic, 1>;
+
+    template <pgo::math::ScalarLike T>
+    using DMat = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>;
+
+    template <pgo::math::RealScalar T>
+    using SparseMat = Eigen::SparseMatrix<T, Eigen::RowMajor>;
+
+    template <pgo::math::RealScalar T>
+    using Triplet = Eigen::Triplet<T>;
+};
+
+} // namespace pgo::math::eigen
+```
+
+设计约束：
+
+- Eigen 是明确 backend，不是 `pgo::math` 本身。
+- `SparseMat<T>` 和 `Triplet<T>` 暂时只接受 `RealScalar`。不要把 autodiff scalar 放进全局 sparse matrix/factorization；AD 应优先用于 local derivative experiment 或未来 GPU-side local formula。
+- 这是 backend-aware alias layer，不是 runtime polymorphism，也不是完整 backend-agnostic 大抽象。
+
+- [x] **Step 3: 定义 backend contract 和默认 aliases**
+
+`backend.hpp` 提供 `MathBackend` concept、`DefaultBackend` 和默认 aliases：
+
+```cpp
+namespace pgo::math {
 
 using Index = std::uint32_t;
+
+template <class Backend>
+concept MathBackend = requires {
+    typename Backend::template Vec<double, 3>;
+    typename Backend::template Mat<double, 3, 3>;
+    typename Backend::template DVec<double>;
+    typename Backend::template DMat<double>;
+    typename Backend::template SparseMat<double>;
+    typename Backend::template Triplet<double>;
+};
+
+using DefaultBackend = pgo::math::eigen::EigenBackend;
+static_assert(MathBackend<DefaultBackend>);
+
+template <ScalarLike T, int Dim>
+using Vec = DefaultBackend::template Vec<T, Dim>;
+
+template <ScalarLike T, int Rows, int Cols>
+using Mat = DefaultBackend::template Mat<T, Rows, Cols>;
+
+template <ScalarLike T>
+using DVec = DefaultBackend::template DVec<T>;
+
+template <ScalarLike T>
+using DMat = DefaultBackend::template DMat<T>;
+
+template <RealScalar T>
+using SparseMat = DefaultBackend::template SparseMat<T>;
+
+template <RealScalar T>
+using Triplet = DefaultBackend::template Triplet<T>;
+
+} // namespace pgo::math
+```
+
+设计约束：
+
+- Milestone 1 的业务代码优先使用 `pgo::math::Vec`、`DVec`、`SparseMat` 等默认 aliases。
+- 如果某个算法需要显式依赖 backend，可以模板化为 `template <class Backend = pgo::math::DefaultBackend>`。
+- 未来 GPU backend 不一定实现 host-side `DVec/SparseMat`，但 local formula 的 `ScalarLike + small Vec/Mat` 形状应保持可迁移。
+
+- [x] **Step 4: 添加 math backend 测试**
+
+在 `tests/CMakeLists.txt` 中加入 `tests/math/test_backend.cpp`。测试文件命名空间使用：
+
+```cpp
+namespace pgo::math::test {
+// TEST(...)
 }
 ```
 
-- [ ] **Step 2: 定义 sparse aliases**
+测试内容：
 
-`sparse.hpp` 提供：
+- `static_assert(pgo::math::MathBackend<pgo::math::DefaultBackend>)`。
+- `pgo::math::Vec<double, 3>` 的 size 是 3。
+- `pgo::math::DVec<double>` 可以 resize 到 4。
+- `pgo::math::SparseMat<double>` 是 row-major sparse matrix。
+- `ScalarLike` 接受 `double`。
+- `RealScalar` 接受 `double`。
 
-```cpp
-template <Scalar T>
-using SparseMat = Eigen::SparseMatrix<T, Eigen::RowMajor>;
-
-template <Scalar T>
-using Triplet = Eigen::Triplet<T>;
-```
-
-- [ ] **Step 3: 提交**
-
-```bash
-git add include/pgo/math
-git commit -m "feat: add math type facade"
-```
 
 ### Task 1.3: 添加 GPU-aware host storage primitive
 
@@ -556,29 +622,31 @@ using HostBuffer = std::vector<T>;
 
 要求：这些类型只表示 host storage 语义。Milestone 2 可以平行添加 `DeviceBuffer` / `DeviceArrayView`，不需要重写 geometry 层。
 
-- [ ] **Step 2: 提交**
 
-```bash
-git add include/pgo/storage
-git commit -m "feat: add host storage primitives"
-```
-
-### Task 1.4: 添加 RestMesh 和 topology
+### Task 1.4: 添加 RestMesh、topology 和第一组测试闭环
 
 **文件:**
 - 创建: `include/pgo/geometry/topology.hpp`
 - 创建: `include/pgo/geometry/rest_mesh.hpp`
 - 创建/修改: `tests/CMakeLists.txt`
-- 创建/修改: `tests/test_dof.cpp`
+- 创建: `tests/geometry/test_rest_mesh.cpp`
 
 - [ ] **Step 1: 定义 topology**
 
 ```cpp
 namespace pgo::geometry {
 using VertexIndex = pgo::math::Index;
-using Edge = std::array<VertexIndex, 2>;
-using Face = std::array<VertexIndex, 3>;
+
+inline constexpr std::size_t kEdgeArity = 2;
+inline constexpr std::size_t kFaceArity = 3;
 }
+```
+
+设计约束：topology 使用 flat index buffers，而不是 `std::array<VertexIndex, 2>` / `std::array<VertexIndex, 3>` object buffers。这样 CPU 访问公式和未来 Vulkan/Slang buffer 访问公式一致：
+
+```text
+edge vertex = edge_indices[kEdgeArity * edge_id + local_vertex]
+face vertex = face_indices[kFaceArity * face_id + local_vertex]
 ```
 
 - [ ] **Step 2: 定义 `RestMesh<T, Dim>`**
@@ -588,12 +656,39 @@ using Face = std::array<VertexIndex, 3>;
 - `rest_positions` 是 vertex-major flat buffer。
 - `num_vertices() == rest_positions.size() / Dim`。
 - `rest_position(i)` 返回 `math::Vec<T, Dim>`。
-- 保存 `edges()` 和 `faces()`。
+- 保存 `edge_indices()` 和 `face_indices()`，长度分别是 `2 * num_edges()` 和 `3 * num_faces()`。
+- 提供 `edge_vertex(edge_id, local_vertex)` 和 `face_vertex(face_id, local_vertex)` helper。
 - 不在 storage 中保存 Eigen vector object。
+- 不在 topology storage 中保存 `std::array`、指针、对象图或 per-edge/per-face 动态分配。
 
 - [ ] **Step 3: 建立测试 target**
 
-`tests/CMakeLists.txt` 创建 `pgo_tests`，链接 `pgo::core` 和 `GTest::gtest_main`，并使用 `include(GoogleTest)` + `gtest_discover_tests(pgo_tests)`。
+`tests/CMakeLists.txt` 创建 `pgo_tests`，包含当前已经存在的 base/math/geometry 测试：
+
+```cmake
+add_executable(pgo_tests
+    base/test_assert.cpp
+    math/test_backend.cpp
+    geometry/test_rest_mesh.cpp
+)
+
+target_link_libraries(pgo_tests PRIVATE pgo::core GTest::gtest_main)
+
+include(GoogleTest)
+gtest_discover_tests(pgo_tests)
+```
+
+`tests/geometry/test_rest_mesh.cpp` 使用 `namespace pgo::geometry::test`，至少测试：
+
+- `RestMesh<double, 3>` 能从 flat position buffer 构造。
+- `num_vertices()`、`num_edges()`、`num_faces()` 正确。
+- `edge_indices().size() == 2 * num_edges()`。
+- `face_indices().size() == 3 * num_faces()`。
+- `edge_vertex(e, local)` 和 `face_vertex(f, local)` 返回正确 vertex index。
+- `rest_position(i)` 返回正确坐标。
+- position buffer 长度不是 `Dim` 的倍数时抛出异常。
+- `edge_indices` 长度不是 `kEdgeArity` 的倍数时抛出异常。
+- `face_indices` 长度不是 `kFaceArity` 的倍数时抛出异常。
 
 - [ ] **Step 4: 运行测试**
 
@@ -603,12 +698,6 @@ cmake --build --preset debug
 ctest --preset debug
 ```
 
-- [ ] **Step 5: 提交**
-
-```bash
-git add include/pgo/geometry tests
-git commit -m "feat: add rest mesh topology"
-```
 
 ### Task 1.5: 添加 DOF layout、displacement、Dirichlet boundary 和 reduced map
 
@@ -617,7 +706,8 @@ git commit -m "feat: add rest mesh topology"
 - 创建: `include/pgo/dof/displacement.hpp`
 - 创建: `include/pgo/dof/dirichlet_boundary.hpp`
 - 创建: `include/pgo/dof/reduced_dof_map.hpp`
-- 修改: `tests/test_dof.cpp`
+- 修改: `tests/CMakeLists.txt`
+- 创建: `tests/dof/test_dof.cpp`
 
 - [ ] **Step 1: 实现 `DofLayout<Dim>`**
 
@@ -637,31 +727,104 @@ dof = vertex * Dim + component
 
 - [ ] **Step 3: 实现 `DirichletBoundary<T>`**
 
-职责：保存 fixed full DOF values。默认固定值为 `0`。
+职责：底层保存 fixed full DOF values。默认固定值为 `0`。
+
+底层表达：
+
+```text
+full_dof_index -> fixed displacement value
+```
+
+必须提供的基础 API：
+
+- `prescribe_dof(dof, value)`：固定单个 scalar displacement DOF 到指定值，这是唯一直接写入底层 map 的 API。
+- `fix_dof(dof)`：固定单个 scalar displacement DOF 到 `0`，内部 dispatch 到 `prescribe_dof(dof, T{0})`。
+- `is_fixed(dof)`：查询 full DOF 是否固定。
+- `value(dof)`：读取 fixed displacement value。
+
+必须提供的 component-level API：
+
+- `prescribe_component(layout, vertex, component, value)`：通过 `layout.index(vertex, component)` dispatch 到 `prescribe_dof`。
+- `fix_component(layout, vertex, component)`：dispatch 到 `prescribe_component(..., T{0})`。
+
+必须提供的 vertex/list convenience helpers：
+
+- `prescribe_vertex(layout, vertex, value)`：`value` 是 `math::Vec<T, Dim>`，逐 component dispatch 到 `prescribe_component`。
+- `fix_vertex(layout, vertex)`：固定某个 vertex 的所有 displacement components 到 `0`，逐 component dispatch 到 `fix_component`。
+- `prescribe_vertices(layout, vertex_indices, value)`：对一组 vertices 使用同一个 prescribed displacement `value`。
+- `fix_vertices(layout, vertex_indices)`：从 fixed vertex list 构造 zero displacement 边界，内部 dispatch 到 `fix_vertex`。
+- `prescribe_vertices_by_list(layout, vertex_indices, values)`：每个 vertex 使用自己的 prescribed displacement。`values` 使用 flat buffer/view，要求 `values.size() == vertex_indices.size() * Dim`，布局是 `values[local_vertex * Dim + component]`。
+
+dispatch 规则：
+
+```text
+prescribe_dof        -> 写入 fixed map
+fix_dof              -> prescribe_dof(dof, 0)
+
+prescribe_component  -> layout.index(vertex, component) -> prescribe_dof
+fix_component        -> prescribe_component(..., 0)
+
+prescribe_vertex     -> loop components -> prescribe_component
+fix_vertex           -> loop components -> fix_component
+
+prescribe_vertices   -> loop vertices -> prescribe_vertex
+fix_vertices         -> loop vertices -> fix_vertex
+prescribe_vertices_by_list -> loop vertices/components -> prescribe_component
+```
+
+设计约束：solver/reduced map 只依赖底层 fixed DOF 表达；example/C API 可以使用 fixed vertex list 这种更符合用户直觉的高层入口。
 
 - [ ] **Step 4: 实现 `ReducedDofMap<T>`**
 
 职责：
 
 - 从 full dofs 和 boundary 生成 `free_to_full` / `full_to_free`。
-- `pack(full_u)` 得到 `free_u`。
-- `unpack(free_u, boundary)` 得到 full `u`。
+- `pack_displacement(full_u)`：从 full displacement vector 选取 free DOFs，得到 `free_u`。
+- `unpack_displacement(free_u, boundary)`：把 reduced/free displacement 展开回 full displacement；fixed DOFs 使用 `DirichletBoundary` 中的 prescribed values。
+- `reduce_vector(full_v)`：从任意 full-space vector 选取 free DOFs，得到 reduced vector。可用于 gradient、force、residual、velocity、search direction 等。
+- `reduce_sparse_mat(full_A)`：从任意 full-space sparse matrix 选取 free-free block，得到 reduced sparse matrix。可用于 Hessian、mass matrix、stiffness matrix、Jacobian normal matrix 等。
 
-- [ ] **Step 5: 添加 DOF 测试**
+设计约束：
 
-测试内容：
+- displacement 的 unpack 需要 boundary value，所以命名为 `unpack_displacement`。
+- 普通 vector reduction 不应该填 prescribed displacement value，因此只提供 `reduce_vector(full_v)`。
+- `ReducedDofMap` 是 DOF space mapping，不应该把 API 命名绑定到 gradient/Hessian。
+
+- [ ] **Step 5: 把 DOF 测试加入测试 target**
+
+修改 `tests/CMakeLists.txt`：
+
+```cmake
+add_executable(pgo_tests
+    base/test_assert.cpp
+    math/test_backend.cpp
+    geometry/test_rest_mesh.cpp
+    dof/test_dof.cpp
+)
+```
+
+- [ ] **Step 6: 添加 DOF 测试**
+
+`tests/dof/test_dof.cpp` 使用 `namespace pgo::dof::test`。测试内容：
 
 - `DofLayout<3>(4)` 有 12 个 DOF。
 - `layout.index(2, 1) == 7`。
-- 固定 DOF 后，`ReducedDofMap` 能正确 pack/unpack。
+- `DirichletBoundary` 可以通过 `fix_dof` 固定单个 scalar DOF 到 0。
+- `DirichletBoundary` 可以通过 `prescribe_dof` 固定单个 scalar DOF 到指定值。
+- `DirichletBoundary` 可以通过 `fix_vertex` 固定某个 vertex 的所有 components 到 0。
+- `DirichletBoundary` 可以通过 `prescribe_vertex` 固定某个 vertex 到指定 displacement vector。
+- `DirichletBoundary` 可以通过 `fix_vertices` 从 fixed vertex list 构造 zero displacement 边界。
+- `DirichletBoundary` 可以通过 `prescribe_vertices` 给一组 vertices 设置同一个 prescribed displacement。
+- `DirichletBoundary` 可以通过 `prescribe_vertices_by_list` 给一组 vertices 设置逐 vertex prescribed displacement，并校验 flat values 长度。
+- 固定 DOF 后，`ReducedDofMap` 能正确 `pack_displacement` / `unpack_displacement`。
+- `reduce_vector(full_v)` 能正确选取 free DOF entries。
+- `reduce_sparse_mat(full_A)` 能正确选取 free-free sparse block。
 
-- [ ] **Step 6: 运行测试并提交**
+- [ ] **Step 7: 运行测试**
 
 ```bash
 cmake --build --preset debug
 ctest --preset debug -R dof
-git add include/pgo/dof tests/test_dof.cpp
-git commit -m "feat: add displacement dof mapping"
 ```
 
 ## Phase 2: OBJ Mesh 输入和 OBJ Frame 输出
@@ -670,7 +833,7 @@ git commit -m "feat: add displacement dof mapping"
 
 **文件:**
 - 创建: `include/pgo/io/obj_reader.hpp`
-- 修改: `tests/test_obj_io.cpp`
+- 修改: `tests/io/test_obj_io.cpp`
 
 - [ ] **Step 1: 实现 `read_obj_rest_mesh<T, Dim>(path)`**
 
@@ -684,7 +847,9 @@ git commit -m "feat: add displacement dof mapping"
 
 要求：
 
-- Faces 自动抽取 undirected unique edges。
+- Faces 自动抽取 undirected unique edges，并写入 flat `edge_indices`。
+- OBJ `l` records 也写入 flat `edge_indices`。
+- Triangular faces 写入 flat `face_indices`。
 - 读取为 `RestMesh<T, Dim>`。
 - `Dim == 2` 时丢弃 OBJ z 坐标。
 
@@ -695,21 +860,21 @@ git commit -m "feat: add displacement dof mapping"
 - `num_vertices() == 4`
 - `num_faces() == 2`
 - `num_edges() == 5`
+- `face_indices().size() == 6`
+- `edge_indices().size() == 10`
 
-- [ ] **Step 3: 运行测试并提交**
+- [ ] **Step 3: 运行测试**
 
 ```bash
 cmake --build --preset debug
 ctest --preset debug -R obj
-git add include/pgo/io/obj_reader.hpp tests/test_obj_io.cpp
-git commit -m "feat: add obj rest mesh reader"
 ```
 
 ### Task 2.2: 添加 OBJ frame writer
 
 **文件:**
 - 创建: `include/pgo/io/obj_frame_writer.hpp`
-- 修改: `tests/test_obj_io.cpp`
+- 修改: `tests/io/test_obj_io.cpp`
 
 - [ ] **Step 1: 实现 `ObjFrameWriter<T, Dim>`**
 
@@ -718,20 +883,18 @@ git commit -m "feat: add obj rest mesh reader"
 - 输入 `RestMesh<T, Dim>` 和 full displacement vector `u`。
 - 输出 `frame_0000.obj`、`frame_0001.obj` 等。
 - 写出的 vertex position 是 `X + u`。
-- 保留原 faces。
-- 如果 mesh 没有 faces，则写 `l` edges。
+- 通过 `face_indices` 保留原 faces。
+- 如果 mesh 没有 faces，则通过 `edge_indices` 写 `l` records。
 
 - [ ] **Step 2: 添加 writer 测试**
 
 创建两点 line mesh，设置第二个点的 displacement，写出 frame 后检查 OBJ 文本包含 displaced vertex。
 
-- [ ] **Step 3: 运行测试并提交**
+- [ ] **Step 3: 运行测试**
 
 ```bash
 cmake --build --preset debug
 ctest --preset debug -R obj
-git add include/pgo/io/obj_frame_writer.hpp tests/test_obj_io.cpp
-git commit -m "feat: add obj frame writer"
 ```
 
 ## Phase 3: Local-Contribution Energy 和 CPU Assembly
@@ -745,10 +908,10 @@ git commit -m "feat: add obj frame writer"
 - [ ] **Step 1: 定义 local aliases**
 
 ```cpp
-template <pgo::math::Scalar T>
+template <pgo::math::ScalarLike T>
 using LocalVector = pgo::math::DVec<T>;
 
-template <pgo::math::Scalar T>
+template <pgo::math::ScalarLike T>
 using LocalMatrix = pgo::math::DMat<T>;
 ```
 
@@ -768,12 +931,6 @@ using LocalMatrix = pgo::math::DMat<T>;
 - `local_gradient(local_id, u, local_g)`
 - `local_hessian(local_id, u, local_H)`
 
-- [ ] **Step 3: 提交**
-
-```bash
-git add include/pgo/assembly/local_matrix.hpp include/pgo/energy/energy_concepts.hpp
-git commit -m "feat: define energy concepts"
-```
 
 ### Task 3.2: 添加 CPU local energy assembler
 
@@ -795,18 +952,12 @@ git commit -m "feat: define energy concepts"
 - 通过 triplets scatter local Hessian。
 - Hessian 使用 `math::SparseMat<T>`。
 
-- [ ] **Step 2: 提交**
-
-```bash
-git add include/pgo/assembly/cpu_assembler.hpp
-git commit -m "feat: add cpu local energy assembler"
-```
 
 ### Task 3.3: 添加 MassSpringEnergy
 
 **文件:**
 - 创建: `include/pgo/energy/mass_spring_energy.hpp`
-- 修改: `tests/test_mass_spring_energy.cpp`
+- 修改: `tests/energy/test_mass_spring_energy.cpp`
 
 - [ ] **Step 1: 实现 `MassSpringEnergy<T, Dim>`**
 
@@ -821,8 +972,8 @@ L = ||X_i - X_j||
 
 要求：
 
-- `local_count()` 等于 edge 数量。
-- `local_dofs(edge_id, dofs)` 返回 `[i0, i1, ..., j0, j1, ...]` 对应的 full displacement DOFs。
+- `local_count()` 等于 `mesh.num_edges()`。
+- `local_dofs(edge_id, dofs)` 通过 `mesh.edge_vertex(edge_id, 0/1)` 取端点，并返回 `[i0, i1, ..., j0, j1, ...]` 对应的 full displacement DOFs。
 - `local_gradient` 和 `local_hessian` 使用解析导数。
 - 对零长度或极短 current edge 做 epsilon clamp，避免 NaN。
 
@@ -836,20 +987,18 @@ L = ||X_i - X_j||
 - finite difference gradient 与解析 gradient 匹配。
 - finite difference Hessian 与解析 Hessian 匹配。
 
-- [ ] **Step 3: 运行测试并提交**
+- [ ] **Step 3: 运行测试**
 
 ```bash
 cmake --build --preset debug
 ctest --preset debug -R mass_spring
-git add include/pgo/energy/mass_spring_energy.hpp tests/test_mass_spring_energy.cpp
-git commit -m "feat: add mass spring energy"
 ```
 
 ### Task 3.4: 添加 finite difference helper
 
 **文件:**
 - 创建: `include/pgo/math/finite_difference.hpp`
-- 修改: `tests/test_finite_difference.cpp`
+- 修改: `tests/math/test_finite_difference.cpp`
 
 - [ ] **Step 1: 实现 helper**
 
@@ -870,13 +1019,11 @@ grad = [2x + 3y, 3x + 4y]
 H = [[2, 3], [3, 4]]
 ```
 
-- [ ] **Step 3: 运行测试并提交**
+- [ ] **Step 3: 运行测试**
 
 ```bash
 cmake --build --preset debug
 ctest --preset debug -R finite
-git add include/pgo/math/finite_difference.hpp tests/test_finite_difference.cpp
-git commit -m "test: add finite difference derivative checks"
 ```
 
 ## Phase 4: Reduced Energy 和 Newton Solver
@@ -886,7 +1033,7 @@ git commit -m "test: add finite difference derivative checks"
 **文件:**
 - 创建: `include/pgo/energy/energy_sum.hpp`
 - 创建: `include/pgo/energy/reduced_energy.hpp`
-- 修改: `tests/test_solver.cpp`
+- 修改: `tests/solver/test_solver.cpp`
 
 - [ ] **Step 1: 实现 `EnergySum<T>`**
 
@@ -901,9 +1048,10 @@ git commit -m "test: add finite difference derivative checks"
 职责：
 
 ```text
-free_u -> unpack 成 full_u
+free_u -> unpack_displacement 成 full_u
 full energy evaluate
-full gradient/Hessian reduce 到 free DOFs
+full gradient 通过 reduce_vector 变成 reduced gradient
+full Hessian 通过 reduce_sparse_mat 变成 reduced Hessian
 ```
 
 - [ ] **Step 3: 添加 reduced energy 测试**
@@ -914,15 +1062,13 @@ full gradient/Hessian reduce 到 free DOFs
 E(u) = 0.5 * u^T A u - b^T u
 ```
 
-固定一个 DOF，验证 reduced gradient/Hessian 等于选取 free rows/cols。
+固定一个 DOF，验证 reduced gradient/Hessian 分别等于 `reduce_vector(full_gradient)` 和 `reduce_sparse_mat(full_hessian)` 的结果。
 
-- [ ] **Step 4: 运行测试并提交**
+- [ ] **Step 4: 运行测试**
 
 ```bash
 cmake --build --preset debug
 ctest --preset debug -R solver
-git add include/pgo/energy/energy_sum.hpp include/pgo/energy/reduced_energy.hpp tests/test_solver.cpp
-git commit -m "feat: add reduced energy view"
 ```
 
 ### Task 4.2: 添加 line search 和 solver result
@@ -952,18 +1098,12 @@ git commit -m "feat: add reduced energy view"
 
 输出 accepted step size。
 
-- [ ] **Step 3: 提交**
-
-```bash
-git add include/pgo/solver/solver_result.hpp include/pgo/solver/line_search.hpp
-git commit -m "feat: add solver result and line search"
-```
 
 ### Task 4.3: 添加 damped Newton solver
 
 **文件:**
 - 创建: `include/pgo/solver/newton_solver.hpp`
-- 修改: `tests/test_solver.cpp`
+- 修改: `tests/solver/test_solver.cpp`
 
 - [ ] **Step 1: 实现 Newton solver**
 
@@ -984,13 +1124,11 @@ git commit -m "feat: add solver result and line search"
 
 创建三点 chain，固定 vertex 0，对末端施加简单 external force energy，求解 reduced energy，验证末端 displacement 朝 force 方向。
 
-- [ ] **Step 4: 运行测试并提交**
+- [ ] **Step 4: 运行测试**
 
 ```bash
 cmake --build --preset debug
 ctest --preset debug -R solver
-git add include/pgo/solver/newton_solver.hpp tests/test_solver.cpp
-git commit -m "feat: add damped newton solver"
 ```
 
 ## Phase 5: Example Simulation 和 OBJ Frame Pipeline
@@ -1014,14 +1152,8 @@ target_link_libraries(pgo_mass_spring_cloth PRIVATE pgo::core CLI11::CLI11)
 
 - 使用 triangular faces。
 - 顶部一行可以通过最大 `y` 坐标识别。
-- mesh edges 可以从 faces 自动抽取。
+- mesh edge indices 可以从 faces 自动抽取。
 
-- [ ] **Step 3: 提交**
-
-```bash
-git add examples/CMakeLists.txt examples/assets/cloth_grid.obj
-git commit -m "feat: add mass spring example asset"
-```
 
 ### Task 5.2: 添加 mass-spring cloth example
 
@@ -1043,7 +1175,7 @@ git commit -m "feat: add mass spring example asset"
 执行流程：
 
 - 读取 OBJ 为 rest mesh。
-- 从 mesh edges 构造 mass-spring energy。
+- 从 `mesh.edge_indices()` / `mesh.edge_vertex()` 构造 mass-spring energy。
 - 固定 top-row vertices 的 displacement DOFs 为 0。
 - 每一帧将 gravity 从 0 ramp 到目标值。
 - 求解 quasi-static equilibrium。
@@ -1058,12 +1190,6 @@ cmake --build --preset debug --target pgo_mass_spring_cloth
 
 期望：生成 `frames/frame_0000.obj` 到 `frames/frame_0004.obj`。
 
-- [ ] **Step 3: 提交**
-
-```bash
-git add examples/mass_spring_cloth.cpp
-git commit -m "feat: add mass spring cloth example"
-```
 
 ### Task 5.3: 添加 OBJ frames -> Alembic Python tool
 
@@ -1089,12 +1215,6 @@ python tools/obj_frames_to_abc.py --frames-dir frames --output cloth.abc
 
 没有 Alembic binding 时，期望返回 code `2` 并打印清晰提示。
 
-- [ ] **Step 3: 提交**
-
-```bash
-git add tools/obj_frames_to_abc.py
-git commit -m "tool: add obj frames to alembic converter"
-```
 
 ## Phase 6: C99 ABI 动态库桥接层
 
@@ -1156,12 +1276,6 @@ PGO_C_API pgo_status_t pgo_world_copy_displacements(const pgo_world_t* world,
                                                     pgo_error_t* error);
 ```
 
-- [ ] **Step 3: 提交**
-
-```bash
-git add include/pgo_c
-git commit -m "feat: add public c api header"
-```
 
 ### Task 6.2: 添加 C API shared library target
 
@@ -1216,12 +1330,6 @@ cmake --build --preset debug --target pgo_c
 
 期望：生成 `libpgo.dylib`、`libpgo.so` 或 `pgo.dll`。
 
-- [ ] **Step 4: 提交**
-
-```bash
-git add src/c_api/CMakeLists.txt src/c_api/pgo_c.cpp
-git commit -m "build: add c api shared library target"
-```
 
 ### Task 6.3: 实现 C++ bridge，不暴露 C++ ABI
 
@@ -1257,20 +1365,14 @@ cmake --preset debug
 cmake --build --preset debug --target pgo_c
 ```
 
-- [ ] **Step 3: 提交**
-
-```bash
-git add src/c_api/pgo_c.cpp
-git commit -m "feat: implement c api bridge"
-```
 
 ### Task 6.4: 添加纯 C API smoke test
 
 **文件:**
-- 创建: `tests/test_c_api.c`
+- 创建: `tests/pgo_c/test_c_api.c`
 - 修改: `tests/CMakeLists.txt`
 
-- [ ] **Step 1: 创建 `tests/test_c_api.c`**
+- [ ] **Step 1: 创建 `tests/pgo_c/test_c_api.c`**
 
 要求：
 
@@ -1288,7 +1390,7 @@ git commit -m "feat: implement c api bridge"
 
 ```cmake
 if(TARGET pgo::c)
-    add_executable(pgo_c_api_tests test_c_api.c)
+    add_executable(pgo_c_api_tests pgo_c/test_c_api.c)
     target_link_libraries(pgo_c_api_tests PRIVATE pgo::c)
     add_test(NAME pgo_c_api_tests COMMAND pgo_c_api_tests)
 endif()
@@ -1311,12 +1413,6 @@ nm -gU build/debug/src/c_api/libpgo.dylib 2>/dev/null || nm -D --defined-only bu
 
 期望：只导出 `pgo_*` C API symbols，不导出 C++ template internals。
 
-- [ ] **Step 5: 提交**
-
-```bash
-git add tests/test_c_api.c tests/CMakeLists.txt
-git commit -m "test: add pure c api smoke test"
-```
 
 ## Phase 7: CI 和验证
 
@@ -1358,12 +1454,6 @@ ctest --preset asan
 
 要求：Phase 0 已经存在 `build-debug` 和 `sanitize` jobs；本任务只是在 tests/examples/C API targets 存在后恢复 `ctest`，不要退回到本机 Conan default profile。
 
-- [ ] **Step 2: 提交**
-
-```bash
-git add .github/workflows/ci.yml
-git commit -m "ci: add build and sanitizer workflow"
-```
 
 ### Task 7.2: 添加 README 构建说明
 
@@ -1407,12 +1497,6 @@ ctest --preset debug
 ```
 ````
 
-- [ ] **Step 2: 提交**
-
-```bash
-git add README.md
-git commit -m "docs: add milestone 1 build instructions"
-```
 
 ## Phase 8: GPU-Awareness 和 ABI Review Gate
 
@@ -1457,12 +1541,6 @@ This is intentional: a Vulkan/Slang backend can dispatch one work item per sprin
 or contact candidate while reusing the same semantic model.
 ```
 
-- [ ] **Step 5: 提交**
-
-```bash
-git add README.md
-git commit -m "docs: record gpu-aware architecture constraints"
-```
 
 ### Task 8.2: 检查 C ABI 边界
 
@@ -1506,12 +1584,6 @@ arrays, explicit destroy functions, and status/error returns. C++ exceptions,
 STL types, Eigen types, and template types do not cross this boundary.
 ```
 
-- [ ] **Step 5: 提交**
-
-```bash
-git add README.md
-git commit -m "docs: record c abi boundary constraints"
-```
 
 ## Milestone 1 完成标准
 
@@ -1543,7 +1615,7 @@ git commit -m "docs: record c abi boundary constraints"
 
 ## 自检记录
 
-- 覆盖范围：计划覆盖 build system、CI、C++23 header-oriented core、Eigen facade、GPU-aware storage、rest/displacement 分离、DOF reduction、OBJ input/output、local energy assembly、mass-spring energy、Newton solver、example frames、C99 dynamic-library API、Alembic 后处理。
+- 覆盖范围：计划覆盖 build system、CI、C++23 header-oriented core、Eigen backend layer、GPU-aware storage、rest/displacement 分离、DOF reduction、OBJ input/output、local energy assembly、mass-spring energy、Newton solver、example frames、C99 dynamic-library API、Alembic 后处理。
 - 占位扫描：计划不包含 `TBD`、`TODO`、`implement later` 等未落实占位。
 - 类型一致性：核心名称统一使用 `RestMesh`、`DofLayout`、`Displacement`、`DirichletBoundary`、`ReducedDofMap`、`MassSpringEnergy`、`ReducedEnergyView`、`ObjFrameWriter`、`NewtonSolver`、`pgo_world_t`、`pgo_error_t`。
 - 范围控制：Vulkan、Slang、FEM、contact、IPC、GPU solvers 不进入 Milestone 1，但数据布局和 API 边界保持兼容。

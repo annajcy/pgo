@@ -9,6 +9,15 @@ include(cmake/pgo_dependencies.cmake)
 include(cmake/pgo_warnings.cmake)
 include(cmake/pgo_sanitizers.cmake)
 
+add_custom_target(copy_compile_commands
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${CMAKE_BINARY_DIR}/compile_commands.json"
+        "${PROJECT_SOURCE_DIR}/compile_commands.json"
+    BYPRODUCTS "${PROJECT_SOURCE_DIR}/compile_commands.json"
+    COMMENT "Copying compile_commands.json to the source tree"
+    VERBATIM
+)
+
 add_library(pgo_core INTERFACE)
 add_library(pgo::core ALIAS pgo_core)
 
