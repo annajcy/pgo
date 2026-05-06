@@ -605,7 +605,7 @@ namespace pgo::math::test {
 - 创建: `include/pgo/storage/array_view.hpp`
 - 创建: `include/pgo/storage/host_buffer.hpp`
 
-- [ ] **Step 1: 定义 view/buffer**
+- [x] **Step 1: 定义 view/buffer**
 
 ```cpp
 namespace pgo::storage {

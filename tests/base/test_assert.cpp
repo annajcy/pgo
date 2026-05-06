@@ -1,19 +1,16 @@
-#include <gtest/gtest.h>
+#include "pgo/base/assert.hpp"
 
+#include <gtest/gtest.h>
 #include <stdexcept>
 #include <string>
 
-#include "pgo/base/assert.hpp"
-
 namespace pgo::base::test {
 
-TEST(BaseRequire, DoesNothingWhenConditionIsTrue)
-{
+TEST(BaseRequire, DoesNothingWhenConditionIsTrue) {
     EXPECT_NO_THROW(pgo::base::require(true, "should not throw"));
 }
 
-TEST(BaseRequire, ThrowsRuntimeErrorWithMessageWhenConditionIsFalse)
-{
+TEST(BaseRequire, ThrowsRuntimeErrorWithMessageWhenConditionIsFalse) {
     try {
         pgo::base::require(false, "missing rest mesh position");
         FAIL() << "Expected pgo::base::require to throw";

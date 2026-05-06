@@ -6,12 +6,9 @@ namespace pgo::math {
 
 template <class T>
 concept ScalarLike = requires(T a, T b) {
-    T{0};
-    T{1};
-    a + b;
-    a - b;
-    a * b;
-    a / b;
+    T{0}; T{1};
+    a + b; a - b;
+    a * b; a / b;
     -a;
 };
 
