@@ -10,7 +10,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            conan_settings: -s:h os=Linux -s:h arch=x86_64 -s:h compiler=gcc -s:h compiler.version=13 -s:h compiler.libcxx=libstdc++11 -s:h compiler.cppstd=gnu17 -s:b os=Linux -s:b arch=x86_64 -s:b compiler=gcc -s:b compiler.version=13 -s:b compiler.libcxx=libstdc++11 -s:b compiler.cppstd=gnu17
+          - os: macos-latest
+            conan_settings: -s:h os=Macos -s:h arch=armv8 -s:h compiler=apple-clang -s:h compiler.version=17.0 -s:h compiler.libcxx=libc++ -s:h compiler.cppstd=gnu17 -s:b os=Macos -s:b arch=armv8 -s:b compiler=apple-clang -s:b compiler.version=17.0 -s:b compiler.libcxx=libc++ -s:b compiler.cppstd=gnu17
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -20,11 +24,8 @@ jobs:
       - name: Install Conan
         run: pipx install conan
 
-      - name: Detect Conan profile
-        run: conan profile detect --force
-
       - name: Install dependencies
-        run: conan install . --output-folder=build/conan/debug --build=missing -s build_type=Debug
+        run: conan install . --output-folder=build/conan/debug --build=missing -s:h build_type=Debug ${{ matrix.conan_settings }}
 
       - name: Configure
         run: cmake --preset debug
@@ -43,11 +44,8 @@ jobs:
       - name: Install Conan
         run: pipx install conan
 
-      - name: Detect Conan profile
-        run: conan profile detect --force
-
       - name: Install dependencies
-        run: conan install . --output-folder=build/conan/debug --build=missing -s build_type=Debug
+        run: conan install . --output-folder=build/conan/debug --build=missing -s:h build_type=Debug -s:h os=Linux -s:h arch=x86_64 -s:h compiler=gcc -s:h compiler.version=13 -s:h compiler.libcxx=libstdc++11 -s:h compiler.cppstd=gnu17 -s:b os=Linux -s:b arch=x86_64 -s:b compiler=gcc -s:b compiler.version=13 -s:b compiler.libcxx=libstdc++11 -s:b compiler.cppstd=gnu17
 
       - name: Configure
         run: cmake --preset asan
