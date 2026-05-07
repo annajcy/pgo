@@ -522,7 +522,7 @@ Linux 安装脚本通过 Intel APT repository 安装 `intel-oneapi-mkl-devel`，
 
 Windows 安装脚本通过 winget 安装 `Intel.oneMKL`，并校验默认安装位置提供 `MKLConfig.cmake`。脚本写入 `MKLROOT`、`MKL_DIR`、`CMAKE_PREFIX_PATH`、`LIB`，同时把 `mkl/latest/bin`、`mkl/latest/redist/intel64`、`mkl/latest/lib/intel64`、`compiler/latest/bin` 中存在的目录加入运行时 `PATH`；在 GitHub Actions 中通过 `GITHUB_PATH` 暴露这些 DLL 目录。
 
-- [ ] **Step 4: 验证 Linux/Windows 系统 oneMKL 配置**
+- [x] **Step 4: 验证 Linux/Windows 系统 oneMKL 配置**
 
 Linux:
 
@@ -782,7 +782,7 @@ ctest --preset debug-acceleration -R EigenConfig
 
 期望：`AUTO` 选择 Accelerate，链接 Accelerate framework，测试通过。
 
-- [ ] **Step 6: 验证 MKL 配置**
+- [x] **Step 6: 验证 MKL 配置**
 
 仅在 Ubuntu/Windows 环境运行。先安装系统 oneMKL 并暴露 `MKLConfig.cmake`：
 
@@ -1038,7 +1038,7 @@ using HostBuffer = std::vector<T>;
 - 创建/修改: `tests/CMakeLists.txt`
 - 创建: `tests/geometry/test_rest_mesh.cpp`
 
-- [ ] **Step 1: 定义 topology**
+- [x] **Step 1: 定义 topology**
 
 ```cpp
 namespace pgo::geometry {
@@ -1056,7 +1056,7 @@ edge vertex = edge_indices[kEdgeArity * edge_id + local_vertex]
 face vertex = face_indices[kFaceArity * face_id + local_vertex]
 ```
 
-- [ ] **Step 2: 定义 `RestMesh<T, Dim>`**
+- [x] **Step 2: 定义 `RestMesh<T, Dim>`**
 
 要求：
 
@@ -1068,7 +1068,7 @@ face vertex = face_indices[kFaceArity * face_id + local_vertex]
 - 不在 storage 中保存 Eigen vector object。
 - 不在 topology storage 中保存 `std::array`、指针、对象图或 per-edge/per-face 动态分配。
 
-- [ ] **Step 3: 建立测试 target**
+- [x] **Step 3: 建立测试 target**
 
 `tests/CMakeLists.txt` 创建 `pgo_tests`，包含当前已经存在的 base/math/geometry 测试：
 
@@ -1098,7 +1098,7 @@ gtest_discover_tests(pgo_tests)
 - `edge_indices` 长度不是 `kEdgeArity` 的倍数时抛出异常。
 - `face_indices` 长度不是 `kFaceArity` 的倍数时抛出异常。
 
-- [ ] **Step 4: 运行测试**
+- [x] **Step 4: 运行测试**
 
 ```bash
 cmake --preset debug
@@ -1117,7 +1117,7 @@ ctest --preset debug
 - 修改: `tests/CMakeLists.txt`
 - 创建: `tests/dof/test_dof.cpp`
 
-- [ ] **Step 1: 实现 `DofLayout<Dim>`**
+- [x] **Step 1: 实现 `DofLayout<Dim>`**
 
 职责：把 `(vertex, component)` 映射到 full displacement dof index：
 
@@ -1125,7 +1125,7 @@ ctest --preset debug
 dof = vertex * Dim + component
 ```
 
-- [ ] **Step 2: 实现 `Displacement<T, Dim>`**
+- [x] **Step 2: 实现 `Displacement<T, Dim>`**
 
 职责：持有 full displacement vector `u`，提供：
 
@@ -1133,7 +1133,7 @@ dof = vertex * Dim + component
 - `vector()`
 - `at(vertex)` 返回该 vertex 的 displacement vector
 
-- [ ] **Step 3: 实现 `DirichletBoundary<T>`**
+- [x] **Step 3: 实现 `DirichletBoundary<T>`**
 
 职责：底层保存 fixed full DOF values。默认固定值为 `0`。
 
@@ -1182,7 +1182,7 @@ prescribe_vertices_by_list -> loop vertices/components -> prescribe_component
 
 设计约束：solver/reduced map 只依赖底层 fixed DOF 表达；example/C API 可以使用 fixed vertex list 这种更符合用户直觉的高层入口。
 
-- [ ] **Step 4: 实现 `ReducedDofMap<T>`**
+- [x] **Step 4: 实现 `ReducedDofMap<T>`**
 
 职责：
 
@@ -1198,7 +1198,7 @@ prescribe_vertices_by_list -> loop vertices/components -> prescribe_component
 - 普通 vector reduction 不应该填 prescribed displacement value，因此只提供 `reduce_vector(full_v)`。
 - `ReducedDofMap` 是 DOF space mapping，不应该把 API 命名绑定到 gradient/Hessian。
 
-- [ ] **Step 5: 把 DOF 测试加入测试 target**
+- [x] **Step 5: 把 DOF 测试加入测试 target**
 
 修改 `tests/CMakeLists.txt`：
 
@@ -1212,7 +1212,7 @@ add_executable(pgo_tests
 )
 ```
 
-- [ ] **Step 6: 添加 DOF 测试**
+- [x] **Step 6: 添加 DOF 测试**
 
 `tests/dof/test_dof.cpp` 使用 `namespace pgo::dof::test`。测试内容：
 
@@ -1229,7 +1229,7 @@ add_executable(pgo_tests
 - `reduce_vector(full_v)` 能正确选取 free DOF entries。
 - `reduce_sparse_mat(full_A)` 能正确选取 free-free sparse block。
 
-- [ ] **Step 7: 运行测试**
+- [x] **Step 7: 运行测试**
 
 ```bash
 cmake --build --preset debug

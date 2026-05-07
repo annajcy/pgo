@@ -1,9 +1,9 @@
 #pragma once
 
+#include "pgo/math/scalar.hpp"
+
 #include <Eigen/Core>
 #include <Eigen/SparseCore>
-
-#include "pgo/math/scalar.hpp"
 
 namespace pgo::math::eigen {
 

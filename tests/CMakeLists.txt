@@ -2,6 +2,8 @@ include(GoogleTest)
 
 add_executable(pgo_tests
     base/test_assert.cpp
+    dof/test_dof.cpp
+    geometry/test_rest_mesh.cpp
     math/test_backend.cpp
     math/test_eigen_config.cpp
     storage/test_storage.cpp

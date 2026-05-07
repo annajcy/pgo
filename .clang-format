@@ -1,10 +1,12 @@
 BasedOnStyle: LLVM
 Standard: Latest
 IndentWidth: 4
+AccessModifierOffset: -4
 ColumnLimit: 120
 PointerAlignment: Left
 ReferenceAlignment: Left
 BreakBeforeBraces: Attach
+AlwaysBreakTemplateDeclarations: Yes
 AllowShortFunctionsOnASingleLine: Empty
 AllowShortIfStatementsOnASingleLine: false
 AllowShortLoopsOnASingleLine: false

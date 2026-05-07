@@ -1,9 +1,9 @@
 #pragma once
 
-#include <cstdint>
-
 #include "pgo/math/eigen_backend.hpp"
 #include "pgo/math/scalar.hpp"
+
+#include <cstdint>
 
 namespace pgo::math {
 
