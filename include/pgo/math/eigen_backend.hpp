@@ -8,6 +8,8 @@
 namespace pgo::math::eigen {
 
 struct EigenBackend {
+    using DenseIndex = Eigen::Index;
+
     template <pgo::math::ScalarLike T, int Dim>
     using Vec = Eigen::Matrix<T, Dim, 1>;
 

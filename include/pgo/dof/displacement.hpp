@@ -10,11 +10,14 @@ namespace pgo::dof {
 
 template <pgo::math::ScalarLike T, int Dim>
 class Displacement {
+    DofLayout<Dim> m_layout;
+    pgo::math::DVec<T> m_vector;
+
 public:
     explicit Displacement(const std::size_t num_vertices) : Displacement{DofLayout<Dim>{num_vertices}} {}
 
     explicit Displacement(DofLayout<Dim> layout)
-        : m_layout{layout}, m_vector{static_cast<Eigen::Index>(m_layout.num_dofs())} {
+        : m_layout{layout}, m_vector{pgo::math::dense_index(m_layout.num_dofs())} {
         m_vector.setZero();
     }
 
@@ -36,15 +39,11 @@ public:
 
         pgo::math::Vec<T, Dim> value{};
         for (std::size_t component = 0; component < static_cast<std::size_t>(Dim); ++component) {
-            value[static_cast<Eigen::Index>(component)] =
-                m_vector[static_cast<Eigen::Index>(m_layout.index(vertex, component))];
+            value[pgo::math::dense_index(component)] =
+                m_vector[pgo::math::dense_index(m_layout.index(vertex, component))];
         }
         return value;
     }
-
-private:
-    DofLayout<Dim> m_layout;
-    pgo::math::DVec<T> m_vector;
 };
 
 } // namespace pgo::dof

@@ -8,6 +8,8 @@ namespace pgo::dof {
 
 template <int Dim>
 class DofLayout {
+    std::size_t m_num_vertices{0};
+
 public:
     static_assert(Dim > 0);
 
@@ -26,9 +28,6 @@ public:
         pgo::base::require(component < static_cast<std::size_t>(Dim), "DOF component index is out of range");
         return vertex * static_cast<std::size_t>(Dim) + component;
     }
-
-private:
-    std::size_t m_num_vertices{0};
 };
 
 } // namespace pgo::dof

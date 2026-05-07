@@ -58,7 +58,7 @@ public:
         pgo::math::Vec<T, Dim> position{};
         const auto offset = vertex * static_cast<std::size_t>(Dim);
         for (std::size_t component = 0; component < static_cast<std::size_t>(Dim); ++component) {
-            position[static_cast<Eigen::Index>(component)] = m_rest_positions[offset + component];
+            position[pgo::math::dense_index(component)] = m_rest_positions[offset + component];
         }
         return position;
     }

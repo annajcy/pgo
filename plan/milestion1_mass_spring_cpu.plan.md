@@ -1133,70 +1133,50 @@ dof = vertex * Dim + component
 - `vector()`
 - `at(vertex)` 返回该 vertex 的 displacement vector
 
-- [x] **Step 3: 实现 `DirichletBoundary<T>`**
+- [x] **Step 3: 实现 `DirichletBoundary<T>` 和 vertex helper free functions**
 
-职责：底层保存 fixed full DOF values。默认固定值为 `0`。
+`DirichletBoundary<T>` 是稀疏的边界条件 builder，底层用 sorted vector 保存 fixed DOF values。只提供核心的标量 DOF 操作：
 
-底层表达：
-
-```text
-full_dof_index -> fixed displacement value
-```
-
-必须提供的基础 API：
-
-- `prescribe_dof(dof, value)`：固定单个 scalar displacement DOF 到指定值，这是唯一直接写入底层 map 的 API。
-- `fix_dof(dof)`：固定单个 scalar displacement DOF 到 `0`，内部 dispatch 到 `prescribe_dof(dof, T{0})`。
+- `prescribe_dof(dof, value)`：固定单个 scalar displacement DOF 到指定值。
+- `fix_dof(dof)`：固定单个 scalar displacement DOF 到 `0`，dispatch 到 `prescribe_dof(dof, T{0})`。
 - `is_fixed(dof)`：查询 full DOF 是否固定。
 - `value(dof)`：读取 fixed displacement value。
 
-必须提供的 component-level API：
+`DirichletBoundaryLike<Boundary, T>` concept 要求 `is_fixed(dof)` 和 `value(dof)`。`DirichletBoundary` 和 `ReducedDofMap` 均满足此 concept。
 
-- `prescribe_component(layout, vertex, component, value)`：通过 `layout.index(vertex, component)` dispatch 到 `prescribe_dof`。
-- `fix_component(layout, vertex, component)`：dispatch 到 `prescribe_component(..., T{0})`。
+Vertex-level convenience helpers 提取为 **namespace-scope free functions**，对任何支持 `prescribe_dof`/`fix_dof` 的 boundary 类型通用：
 
-必须提供的 vertex/list convenience helpers：
+- `prescribe_component(boundary, layout, vertex, component, value)`
+- `fix_component(boundary, layout, vertex, component)`
+- `prescribe_vertex(boundary, layout, vertex, value)`
+- `fix_vertex(boundary, layout, vertex)`
+- `prescribe_vertices(boundary, layout, vertex_indices, value)`
+- `fix_vertices(boundary, layout, vertex_indices)`
+- `prescribe_vertices_by_list(boundary, layout, vertex_indices, values)`
 
-- `prescribe_vertex(layout, vertex, value)`：`value` 是 `math::Vec<T, Dim>`，逐 component dispatch 到 `prescribe_component`。
-- `fix_vertex(layout, vertex)`：固定某个 vertex 的所有 displacement components 到 `0`，逐 component dispatch 到 `fix_component`。
-- `prescribe_vertices(layout, vertex_indices, value)`：对一组 vertices 使用同一个 prescribed displacement `value`。
-- `fix_vertices(layout, vertex_indices)`：从 fixed vertex list 构造 zero displacement 边界，内部 dispatch 到 `fix_vertex`。
-- `prescribe_vertices_by_list(layout, vertex_indices, values)`：每个 vertex 使用自己的 prescribed displacement。`values` 使用 flat buffer/view，要求 `values.size() == vertex_indices.size() * Dim`，布局是 `values[local_vertex * Dim + component]`。
-
-dispatch 规则：
-
-```text
-prescribe_dof        -> 写入 fixed map
-fix_dof              -> prescribe_dof(dof, 0)
-
-prescribe_component  -> layout.index(vertex, component) -> prescribe_dof
-fix_component        -> prescribe_component(..., 0)
-
-prescribe_vertex     -> loop components -> prescribe_component
-fix_vertex           -> loop components -> fix_component
-
-prescribe_vertices   -> loop vertices -> prescribe_vertex
-fix_vertices         -> loop vertices -> fix_vertex
-prescribe_vertices_by_list -> loop vertices/components -> prescribe_component
-```
-
-设计约束：solver/reduced map 只依赖底层 fixed DOF 表达；example/C API 可以使用 fixed vertex list 这种更符合用户直觉的高层入口。
+设计约束：solver/reduced map 只依赖 `DirichletBoundaryLike` concept；vertex helpers 是 free functions，不与具体 boundary 类绑定。
 
 - [x] **Step 4: 实现 `ReducedDofMap<T>`**
 
-职责：
+职责：从 `DirichletBoundaryLike` boundary snapshot 构建 immutable 的 DOF 映射，同时自身也满足 `DirichletBoundaryLike` concept（可作为 dense boundary snapshot 使用）。
 
-- 从 full dofs 和 boundary 生成 `free_to_full` / `full_to_free`。
-- `pack_displacement(full_u)`：从 full displacement vector 选取 free DOFs，得到 `free_u`。
-- `unpack_displacement(free_u, boundary)`：把 reduced/free displacement 展开回 full displacement；fixed DOFs 使用 `DirichletBoundary` 中的 prescribed values。
-- `reduce_vector(full_v)`：从任意 full-space vector 选取 free DOFs，得到 reduced vector。可用于 gradient、force、residual、velocity、search direction 等。
-- `reduce_sparse_mat(full_A)`：从任意 full-space sparse matrix 选取 free-free block，得到 reduced sparse matrix。可用于 Hessian、mass matrix、stiffness matrix、Jacobian normal matrix 等。
+核心 API：
+
+- 构造：`ReducedDofMap(full_dofs, boundary)` — 从 boundary 生成 `free_to_full` / `full_to_free` 双向映射并快照 prescribed values。
+- 查询：`full_dofs()`, `free_dofs()`, `full_dof(free)`, `free_dof(full)`, `is_free(full)`, `is_fixed(full)`, `value(full)`, `fixed_value(full)`。
+
+消元 API（符合标准 FEM Dirichlet 消元规律）：
+
+- `pack_rhs(full_f, full_K)` → `f_free − K_fc · g`：正确的消元 RHS，减去 free×fixed block 与 prescribed values 的乘积。
+- `pack_matrix(full_K)` → `K_ff`：提取 free×free block。
+- `unpack_matrix(K_ff)` → full-size matrix：free×free block 放回原位，fixed DOF 对角线放 `1`（identity，消元规律）。
+- `unpack_solution(free_u)` → full displacement：free DOF 填入 `free_u`，fixed DOF 填入 prescribed values。
 
 设计约束：
 
-- displacement 的 unpack 需要 boundary value，所以命名为 `unpack_displacement`。
-- 普通 vector reduction 不应该填 prescribed displacement value，因此只提供 `reduce_vector(full_v)`。
-- `ReducedDofMap` 是 DOF space mapping，不应该把 API 命名绑定到 gradient/Hessian。
+- 不提供 `pack_vector`（容易误用于 force vector 而遗漏 K_fc·g 修正）。
+- `unpack_matrix` 固定 DOF 对角线为 1，不论 prescribed value 是否为 0（prescribed value 进 RHS，不进矩阵）。
+- `ReducedDofMap` 是 construct-once immutable snapshot，不提供 mutable 的 `prescribe_dof`。
 
 - [x] **Step 5: 把 DOF 测试加入测试 target**
 
@@ -1218,16 +1198,14 @@ add_executable(pgo_tests
 
 - `DofLayout<3>(4)` 有 12 个 DOF。
 - `layout.index(2, 1) == 7`。
-- `DirichletBoundary` 可以通过 `fix_dof` 固定单个 scalar DOF 到 0。
-- `DirichletBoundary` 可以通过 `prescribe_dof` 固定单个 scalar DOF 到指定值。
-- `DirichletBoundary` 可以通过 `fix_vertex` 固定某个 vertex 的所有 components 到 0。
-- `DirichletBoundary` 可以通过 `prescribe_vertex` 固定某个 vertex 到指定 displacement vector。
-- `DirichletBoundary` 可以通过 `fix_vertices` 从 fixed vertex list 构造 zero displacement 边界。
-- `DirichletBoundary` 可以通过 `prescribe_vertices` 给一组 vertices 设置同一个 prescribed displacement。
-- `DirichletBoundary` 可以通过 `prescribe_vertices_by_list` 给一组 vertices 设置逐 vertex prescribed displacement，并校验 flat values 长度。
-- 固定 DOF 后，`ReducedDofMap` 能正确 `pack_displacement` / `unpack_displacement`。
-- `reduce_vector(full_v)` 能正确选取 free DOF entries。
-- `reduce_sparse_mat(full_A)` 能正确选取 free-free sparse block。
+- `DirichletBoundary` 核心 API：`fix_dof`、`prescribe_dof`、`is_fixed`、`value`。
+- Vertex helper free functions：`fix_vertex`、`prescribe_vertex`、`fix_vertices`、`prescribe_vertices`、`prescribe_vertices_by_list`。
+- `ReducedDofMap` 满足 `DirichletBoundaryLike` concept（`is_fixed`、`value`）。
+- `pack_rhs(f, K)` 正确实现消元 RHS（`f_free − K_fc · g`），非零 prescribed values 下验证。
+- `pack_matrix(K)` 提取 free×free block。
+- `unpack_matrix(K_ff)` 还原矩阵，fixed DOF 对角线为 1。
+- `unpack_solution(free_u)` 还原解向量，fixed DOF 填 prescribed values。
+- End-to-end elimination test：构建 SPD 系统 → pack → solve → unpack → 验证 K·u = f 残差为零。
 
 - [x] **Step 7: 运行测试**
 
@@ -1457,10 +1435,10 @@ ctest --preset debug -R finite
 职责：
 
 ```text
-free_u -> unpack_displacement 成 full_u
+free_u -> unpack_solution 成 full_u
 full energy evaluate
-full gradient 通过 reduce_vector 变成 reduced gradient
-full Hessian 通过 reduce_sparse_mat 变成 reduced Hessian
+full gradient 通过 pack_rhs 变成 reduced gradient（含 K_fc·g 修正）
+full Hessian 通过 pack_matrix 变成 reduced Hessian
 ```
 
 - [ ] **Step 3: 添加 reduced energy 测试**
