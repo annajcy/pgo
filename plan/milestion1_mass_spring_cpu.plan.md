@@ -17,6 +17,8 @@
 - Rest positions `X` 和 topology 属于 `geometry::RestMesh<T, Dim>`。
 - Mesh storage 使用 flat scalar/index arrays：positions 长度为 `num_vertices * Dim`，topology 使用 index buffer。
 - Eigen 只通过 `pgo::math::eigen::EigenBackend` 和 `pgo::math` 默认 aliases 用于 CPU 数值计算和 sparse solve；`geometry/` 与 `storage/` 不存储 `Eigen::Vector3d`、`Eigen::MatrixXd` 等对象。
+- Eigen CPU acceleration 是构建配置层：`PGO_ENABLE_EIGEN_ACCELERATION` 只控制 Eigen 调用 BLAS/LAPACK 类 backend（Apple Accelerate 或 MKL），不等同于选择 sparse linear solver。
+- PARDISO 属于 linear solver backend 候选，不属于 `MathBackend`。后续应通过 `PGO_CPU_LINEAR_SOLVER` 或 solver policy 选择 `Eigen::PardisoLDLT` / `Eigen::SimplicialLDLT` / CG，而不是塞进 Eigen acceleration 开关。
 - 不引入 `fmt` 第三方依赖；需要格式化字符串时使用标准库 `<format>` / `std::format`。核心库应尽量少做格式化，C API 错误消息用固定 buffer 写入。
 - Energy model 必须暴露 local contribution API，使 CPU assembly 和未来 GPU kernel 能共享同一语义边界。
 - Milestone 1 只实现 CPU assembly、CPU Newton solver、OBJ input/output、C99 ABI facade。
@@ -38,6 +40,7 @@
   README.md
   cmake/
     pgo_dependencies.cmake
+    pgo_eigen.cmake
     pgo_options.cmake
     pgo_sanitizers.cmake
     pgo_warnings.cmake
@@ -108,6 +111,7 @@
       test_obj_io.cpp
     math/
       test_backend.cpp
+      test_eigen_config.cpp
       test_finite_difference.cpp
     pgo_c/
       test_c_api.c
@@ -432,9 +436,426 @@ README 使用 `uv tool install conan` / `uv tool install ninja` 管理 Python to
 
 - `ubuntu-latest` + `conan/profiles/ubuntu-x86_64-gcc`
 - `macos-latest` + `conan/profiles/macos-arm64-apple-clang`
+- `windows-latest` + `conan/profiles/windows-x86_64-msvc`
 - `ubuntu-latest` ASan/UBSan
 
 Phase 0 CI 只做 configure/build。等 Phase 1 创建 `tests/CMakeLists.txt` 后，Phase 7 再把 `ctest` 加回 CI。
+
+
+## Phase 0.5: Eigen CPU acceleration 配置层
+
+**目标:** 在进入 math backend 代码前，先把 Eigen 的 CPU acceleration 配置体系化。这个 phase 只管理 Eigen 与 BLAS/LAPACK 后端的编译/链接配置，不负责选择 Newton 线性求解器。
+
+**设计边界:**
+
+- `PGO_ENABLE_EIGEN_ACCELERATION` 控制 Eigen 是否启用平台 BLAS/LAPACK acceleration。
+- `PGO_EIGEN_ACCELERATION_BACKEND` 控制 acceleration backend：`AUTO` / `MKL` / `ACCELERATE` / `NONE`。
+- Apple 平台 `AUTO` 选择 Accelerate。
+- Ubuntu/Windows 平台 `AUTO` 选择 MKL。
+- 默认 `PGO_ENABLE_EIGEN_ACCELERATION=OFF`，保证普通开发和 CI 不要求 MKL/Accelerate 环境。
+- Apple Accelerate 是系统 framework，不通过 Conan 管理。
+- oneMKL 优先通过 Conan 管理；系统安装的 oneMKL 只作为 fallback，只要能提供 `MKLConfig.cmake` 即可。
+- Conan option 使用 `with_mkl`，默认 `False`。macOS 上 `with_mkl=True` 应直接判为 invalid configuration，避免 macOS acceleration job 意外拉取 MKL。
+- PARDISO 是 MKL 中的 sparse direct solver，但它不是 Eigen 的 `MathBackend`，也不是这个 acceleration option 的语义。后续 solver 层应单独引入 `PGO_CPU_LINEAR_SOLVER=EIGEN_SIMPLICIAL_LDLT/MKL_PARDISO/...`。
+- 选项名使用 `PGO_ENABLE_EIGEN_ACCELERATION`，不要使用拼写错误的 `acceloration`。
+
+### Task 0.5.1: 添加 Conan MKL option 和平台边界
+
+**文件:**
+- 修改: `conanfile.py`
+
+- [x] **Step 1: 添加 `with_mkl` option**
+
+`conanfile.py` 更新为：
+
+```python
+from conan import ConanFile
+from conan.errors import ConanInvalidConfiguration
+
+
+class PgoRecipe(ConanFile):
+    name = "pgo"
+    version = "0.1.0"
+    package_type = "header-library"
+    settings = "os", "compiler", "build_type", "arch"
+    options = {
+        "with_mkl": [True, False],
+    }
+    default_options = {
+        "with_mkl": False,
+    }
+    generators = "CMakeDeps", "CMakeToolchain"
+
+    def validate(self):
+        if self.options.with_mkl and self.settings.os == "Macos":
+            raise ConanInvalidConfiguration(
+                "with_mkl=True is disabled on macOS; use Apple Accelerate instead."
+            )
+
+    def requirements(self):
+        self.requires("eigen/3.4.0")
+        self.requires("cli11/[>=2.4 <3]")
+
+        if self.options.with_mkl and self.settings.os != "Macos":
+            self.requires("mkl/[>=2024 <2027]")
+
+    def build_requirements(self):
+        self.test_requires("gtest/[>=1.14 <2]")
+```
+
+设计约束：
+
+- macOS 不通过 Conan 拉取 MKL；macOS acceleration 只使用系统 Accelerate。`requirements()` 里也要避开 macOS MKL requirement，这样 `with_mkl=True` 时能稳定走到自定义 invalid configuration 信息，而不是先失败在 MKL package 解析。
+- Linux/Windows MKL acceleration jobs 必须在 `conan install` 时启用 `with_mkl=True`。
+- CMake 仍只使用 `find_package(MKL CONFIG REQUIRED)`，不关心 MKL 来自 Conan 还是系统安装。
+
+- [x] **Step 2: 验证默认 Conan 依赖不拉 MKL**
+
+```bash
+conan install . \
+  --profile:host=conan/profiles/default \
+  --profile:build=conan/profiles/default \
+  --output-folder=build/conan/debug \
+  --build=missing \
+  -s:h build_type=Debug
+```
+
+期望：依赖图包含 Eigen/CLI11/GTest，不包含 MKL。
+
+- [ ] **Step 3: 验证 Linux/Windows MKL Conan 依赖**
+
+Linux:
+
+```bash
+conan install . \
+  --profile:host=conan/profiles/ubuntu-x86_64-gcc \
+  --profile:build=conan/profiles/ubuntu-x86_64-gcc \
+  --output-folder=build/conan/debug-acceleration \
+  --build=missing \
+  -s:h build_type=Debug \
+  -o '&:with_mkl=True'
+```
+
+Windows:
+
+```powershell
+conan install . `
+  --profile:host=conan/profiles/windows-x86_64-msvc `
+  --profile:build=conan/profiles/windows-x86_64-msvc `
+  --output-folder=build/conan/debug-acceleration `
+  --build=missing `
+  -s:h build_type=Debug `
+  -o '&:with_mkl=True'
+```
+
+期望：依赖图包含 MKL，并生成能让 `find_package(MKL CONFIG REQUIRED)` 成功的 CMake package files。
+
+- [x] **Step 4: 验证 macOS 禁用 `with_mkl=True`**
+
+```bash
+conan install . \
+  --profile:host=conan/profiles/macos-arm64-apple-clang \
+  --profile:build=conan/profiles/macos-arm64-apple-clang \
+  --output-folder=build/conan/debug-acceleration \
+  --build=missing \
+  -s:h build_type=Debug \
+  -o '&:with_mkl=True'
+```
+
+期望：Conan configure 阶段失败，错误信息说明 macOS 使用 Apple Accelerate，不使用 `with_mkl=True`。
+
+### Task 0.5.2: 添加 Eigen 配置 target
+
+**文件:**
+- 创建: `cmake/pgo_eigen.cmake`
+- 修改: `cmake/pgo_options.cmake`
+- 修改: `CMakeLists.txt`
+
+- [x] **Step 1: 在 `cmake/pgo_options.cmake` 中添加选项**
+
+```cmake
+option(PGO_ENABLE_EIGEN_ACCELERATION "Enable Eigen BLAS/LAPACK acceleration" OFF)
+
+set(PGO_EIGEN_ACCELERATION_BACKEND "AUTO" CACHE STRING "Eigen acceleration backend: AUTO, MKL, ACCELERATE, NONE")
+set_property(CACHE PGO_EIGEN_ACCELERATION_BACKEND PROPERTY STRINGS AUTO MKL ACCELERATE NONE)
+```
+
+- [x] **Step 2: 创建 `cmake/pgo_eigen.cmake`**
+
+```cmake
+add_library(pgo_eigen_config INTERFACE)
+add_library(pgo::eigen_config ALIAS pgo_eigen_config)
+
+target_link_libraries(pgo_eigen_config INTERFACE Eigen3::Eigen)
+
+set(PGO_SELECTED_EIGEN_ACCELERATION_BACKEND "NONE")
+
+if(PGO_ENABLE_EIGEN_ACCELERATION)
+    if(PGO_EIGEN_ACCELERATION_BACKEND STREQUAL "AUTO")
+        if(APPLE)
+            set(PGO_SELECTED_EIGEN_ACCELERATION_BACKEND "ACCELERATE")
+        elseif(UNIX OR WIN32)
+            set(PGO_SELECTED_EIGEN_ACCELERATION_BACKEND "MKL")
+        else()
+            set(PGO_SELECTED_EIGEN_ACCELERATION_BACKEND "NONE")
+        endif()
+    else()
+        set(PGO_SELECTED_EIGEN_ACCELERATION_BACKEND "${PGO_EIGEN_ACCELERATION_BACKEND}")
+    endif()
+endif()
+
+if(PGO_SELECTED_EIGEN_ACCELERATION_BACKEND STREQUAL "MKL")
+    find_package(MKL CONFIG REQUIRED)
+
+    target_compile_definitions(pgo_eigen_config INTERFACE
+        EIGEN_USE_MKL_ALL
+        PGO_EIGEN_ACCELERATION_MKL
+    )
+
+    target_link_libraries(pgo_eigen_config INTERFACE MKL::MKL)
+elseif(PGO_SELECTED_EIGEN_ACCELERATION_BACKEND STREQUAL "ACCELERATE")
+    if(NOT APPLE)
+        message(FATAL_ERROR "PGO_EIGEN_ACCELERATION_BACKEND=ACCELERATE is only supported on Apple platforms.")
+    endif()
+
+    find_library(PGO_ACCELERATE_FRAMEWORK Accelerate REQUIRED)
+
+    target_compile_definitions(pgo_eigen_config INTERFACE
+        EIGEN_USE_BLAS
+        PGO_EIGEN_ACCELERATION_ACCELERATE
+    )
+
+    target_link_libraries(pgo_eigen_config INTERFACE "${PGO_ACCELERATE_FRAMEWORK}")
+elseif(PGO_SELECTED_EIGEN_ACCELERATION_BACKEND STREQUAL "NONE")
+    target_compile_definitions(pgo_eigen_config INTERFACE
+        PGO_EIGEN_ACCELERATION_NONE
+    )
+else()
+    message(FATAL_ERROR "Unknown PGO_SELECTED_EIGEN_ACCELERATION_BACKEND=${PGO_SELECTED_EIGEN_ACCELERATION_BACKEND}")
+endif()
+```
+
+设计约束：
+
+- `EIGEN_USE_MKL_ALL` / `EIGEN_USE_BLAS` 必须通过 `pgo::eigen_config` target 传播，不能散落在源码里。
+- Apple 第一版只定义 `EIGEN_USE_BLAS`，不默认定义 `EIGEN_USE_LAPACKE`。Accelerate 的 LAPACK/LAPACKE 接口后续用单独测试确认后再扩展。
+- `PGO_ENABLE_EIGEN_ACCELERATION=ON` 且 backend 选到 MKL 时，找不到 MKL 应直接 configure 失败，不静默降级。
+
+- [x] **Step 3: 修改顶层 `CMakeLists.txt`**
+
+include 顺序改为：
+
+```cmake
+include(cmake/pgo_options.cmake)
+include(cmake/pgo_dependencies.cmake)
+include(cmake/pgo_eigen.cmake)
+include(cmake/pgo_warnings.cmake)
+include(cmake/pgo_sanitizers.cmake)
+```
+
+`pgo_core` 不再直接链接 `Eigen3::Eigen`，而是链接 `pgo::eigen_config`：
+
+```cmake
+target_link_libraries(pgo_core INTERFACE pgo::eigen_config)
+target_link_libraries(pgo_core INTERFACE pgo_project_warnings pgo_project_sanitizers)
+```
+
+### Task 0.5.3: 添加 acceleration presets、smoke test 和验证命令
+
+**文件:**
+- 修改: `CMakePresets.json`
+- 创建: `tests/math/test_eigen_config.cpp`
+- 修改: `tests/CMakeLists.txt`
+
+- [x] **Step 1: 添加测试文件**
+
+`tests/math/test_eigen_config.cpp` 使用 `namespace pgo::math::test`。测试内容：
+
+```cpp
+#include <gtest/gtest.h>
+
+#include <Eigen/Dense>
+
+namespace pgo::math::test {
+
+TEST(EigenConfig, DenseMatrixMultiplyWorks) {
+    Eigen::Matrix2d a;
+    a << 1.0, 2.0,
+         3.0, 4.0;
+
+    const Eigen::Matrix2d b = Eigen::Matrix2d::Identity();
+    const Eigen::Matrix2d c = a * b;
+
+    EXPECT_DOUBLE_EQ(c(0, 0), 1.0);
+    EXPECT_DOUBLE_EQ(c(1, 1), 4.0);
+}
+
+} // namespace pgo::math::test
+```
+
+- [x] **Step 2: 把测试加入 `tests/CMakeLists.txt`**
+
+```cmake
+add_executable(pgo_tests
+    base/test_assert.cpp
+    math/test_backend.cpp
+    math/test_eigen_config.cpp
+    geometry/test_rest_mesh.cpp
+)
+```
+
+- [x] **Step 3: 添加 preset-driven acceleration 配置**
+
+`CMakePresets.json` 保持 baseline presets：
+
+```text
+debug
+release
+asan
+```
+
+并新增 acceleration presets：
+
+```text
+debug-acceleration
+release-acceleration
+```
+
+`debug-acceleration` 使用：
+
+```json
+{
+  "name": "debug-acceleration",
+  "inherits": "base",
+  "binaryDir": "${sourceDir}/build/debug-acceleration",
+  "cacheVariables": {
+    "CMAKE_BUILD_TYPE": "Debug",
+    "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/debug-acceleration/conan_toolchain.cmake",
+    "PGO_ENABLE_EIGEN_ACCELERATION": "ON",
+    "PGO_EIGEN_ACCELERATION_BACKEND": "AUTO"
+  }
+}
+```
+
+`release-acceleration` 使用：
+
+```json
+{
+  "name": "release-acceleration",
+  "inherits": "base",
+  "binaryDir": "${sourceDir}/build/release-acceleration",
+  "cacheVariables": {
+    "CMAKE_BUILD_TYPE": "Release",
+    "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/release-acceleration/conan_toolchain.cmake",
+    "PGO_ENABLE_EIGEN_ACCELERATION": "ON",
+    "PGO_EIGEN_ACCELERATION_BACKEND": "AUTO"
+  }
+}
+```
+
+要求同时添加同名 build/test presets：
+
+```text
+cmake --build --preset debug-acceleration
+ctest --preset debug-acceleration
+cmake --build --preset release-acceleration
+ctest --preset release-acceleration
+```
+
+设计约束：
+
+- Preset 不写死 `MKL` 或 `ACCELERATE`，统一使用 `PGO_EIGEN_ACCELERATION_BACKEND=AUTO`。
+- 平台差异由 CMake 自动选择：macOS -> Accelerate，Linux/Windows -> MKL。
+- 平台依赖由 Conan install 决定：macOS 不传 `with_mkl=True`，Linux/Windows acceleration install 传 `with_mkl=True`。
+
+- [x] **Step 4: 验证默认配置**
+
+```bash
+cmake --preset debug
+cmake --build --preset debug
+ctest --preset debug -R EigenConfig
+```
+
+期望：不需要 MKL 或 Accelerate 额外配置，测试通过。
+
+- [x] **Step 5: 验证 Apple Accelerate 配置**
+
+仅在 macOS 上运行：
+
+```bash
+conan install . \
+  --profile:host=conan/profiles/macos-arm64-apple-clang \
+  --profile:build=conan/profiles/macos-arm64-apple-clang \
+  --output-folder=build/conan/debug-acceleration \
+  --build=missing \
+  -s:h build_type=Debug
+cmake --preset debug-acceleration
+cmake --build --preset debug-acceleration
+ctest --preset debug-acceleration -R EigenConfig
+```
+
+期望：`AUTO` 选择 Accelerate，链接 Accelerate framework，测试通过。
+
+- [ ] **Step 6: 验证 MKL 配置**
+
+仅在 Ubuntu/Windows 环境运行。推荐通过 Conan `with_mkl=True` 提供 oneMKL：
+
+```bash
+conan install . \
+  --profile:host=conan/profiles/ubuntu-x86_64-gcc \
+  --profile:build=conan/profiles/ubuntu-x86_64-gcc \
+  --output-folder=build/conan/debug-acceleration \
+  --build=missing \
+  -s:h build_type=Debug \
+  -o '&:with_mkl=True'
+```
+
+然后运行：
+
+```bash
+cmake --preset debug-acceleration
+cmake --build --preset debug-acceleration
+ctest --preset debug-acceleration -R EigenConfig
+```
+
+期望：`AUTO` 选择 MKL，链接 `MKL::MKL`，测试通过。
+
+### Task 0.5.4: 记录 PARDISO 与 solver backend 边界
+
+**文件:**
+- 修改: `README.md`
+- 修改: `plan/milestion1_mass_spring_cpu.plan.md`
+
+- [x] **Step 1: 在 README 记录 Eigen acceleration 语义**
+
+必须写明：
+
+```text
+PGO_ENABLE_EIGEN_ACCELERATION controls Eigen's BLAS/LAPACK acceleration path.
+It does not select the sparse linear solver used by Newton iterations.
+```
+
+- [x] **Step 2: 记录 PARDISO 的位置**
+
+必须写明：
+
+```text
+MKL is a math library suite. PARDISO is MKL's sparse direct solver.
+Eigen::PardisoLDLT is Eigen's wrapper around MKL PARDISO.
+PGO will model PARDISO as a linear solver backend, not as a MathBackend.
+```
+
+- [x] **Step 3: 预留后续 solver option，不在 Phase 0.5 实现**
+
+后续 solver 层可以引入：
+
+```text
+PGO_CPU_LINEAR_SOLVER=EIGEN_SIMPLICIAL_LDLT
+PGO_CPU_LINEAR_SOLVER=MKL_PARDISO
+PGO_CPU_LINEAR_SOLVER=EIGEN_CONJUGATE_GRADIENT
+```
+
+Milestone 1 默认仍使用 Eigen `SimplicialLDLT`，直到 solver policy 文件稳定后再引入 PARDISO。
 
 
 ## Phase 1: Base、Math、Storage、Geometry、DOF 核心
@@ -669,6 +1090,7 @@ face vertex = face_indices[kFaceArity * face_id + local_vertex]
 add_executable(pgo_tests
     base/test_assert.cpp
     math/test_backend.cpp
+    math/test_eigen_config.cpp
     geometry/test_rest_mesh.cpp
 )
 
@@ -798,6 +1220,7 @@ prescribe_vertices_by_list -> loop vertices/components -> prescribe_component
 add_executable(pgo_tests
     base/test_assert.cpp
     math/test_backend.cpp
+    math/test_eigen_config.cpp
     geometry/test_rest_mesh.cpp
     dof/test_dof.cpp
 )
@@ -1416,20 +1839,29 @@ nm -gU build/debug/src/c_api/libpgo.dylib 2>/dev/null || nm -D --defined-only bu
 
 ## Phase 7: CI 和验证
 
-### Task 7.1: 升级 GitHub Actions CI 为 build/test
+### Task 7.1: 升级 GitHub Actions CI 为全平台 build/test
 
 **文件:**
 - 修改: `.github/workflows/ci.yml`
 
-- [ ] **Step 1: 在 Phase 0 build-only CI 基础上加入测试步骤**
+- [x] **Step 1: 在 Phase 0 build-only CI 基础上加入 Linux/macOS/Windows 测试步骤**
 
 CI 至少包含：
 
 - `ubuntu-latest` Debug build/test。
 - `macos-latest` Debug build/test。
+- `windows-latest` Debug build/test。
 - `ubuntu-latest` ASan/UBSan build/test。
 
-每个 job 执行：
+Debug job 使用对应仓库内 profile：
+
+```text
+ubuntu-latest  -> conan/profiles/ubuntu-x86_64-gcc
+macos-latest   -> conan/profiles/macos-arm64-apple-clang
+windows-latest -> conan/profiles/windows-x86_64-msvc
+```
+
+Linux/macOS Debug job 执行：
 
 ```bash
 uv tool install conan
@@ -1438,6 +1870,21 @@ conan install . \
   --profile:build=conan/profiles/${PROFILE_NAME} \
   --output-folder=build/conan/debug \
   --build=missing \
+  -s:h build_type=Debug
+cmake --preset debug
+cmake --build --preset debug
+ctest --preset debug
+```
+
+Windows Debug job 执行同样的 configure/build/test 流程，但 shell 使用 PowerShell 或 bash 均可；路径变量不要写死 Unix-only 路径。命令语义是：
+
+```powershell
+uv tool install conan
+conan install . `
+  --profile:host=conan/profiles/windows-x86_64-msvc `
+  --profile:build=conan/profiles/windows-x86_64-msvc `
+  --output-folder=build/conan/debug `
+  --build=missing `
   -s:h build_type=Debug
 cmake --preset debug
 cmake --build --preset debug
@@ -1453,6 +1900,116 @@ ctest --preset asan
 ```
 
 要求：Phase 0 已经存在 `build-debug` 和 `sanitize` jobs；本任务只是在 tests/examples/C API targets 存在后恢复 `ctest`，不要退回到本机 Conan default profile。
+
+- [x] **Step 2: 添加 preset-driven `PGO_ENABLE_EIGEN_ACCELERATION=ON` CI 验证**
+
+默认全平台 CI 必须保持：
+
+```text
+PGO_ENABLE_EIGEN_ACCELERATION=OFF
+```
+
+这是 baseline job，保证没有 acceleration dependency 的用户也能稳定构建。
+
+同时必须添加 acceleration-on jobs，全部使用 preset：
+
+- `macos-latest` + `debug-acceleration`，CMake `AUTO` 选择 Accelerate。
+- `ubuntu-latest` + `debug-acceleration`，CMake `AUTO` 选择 MKL。
+- `windows-latest` + `debug-acceleration`，CMake `AUTO` 选择 MKL。
+
+MKL jobs 必须在 `conan install` 时启用 `-o '&:with_mkl=True'`，优先由 Conan 提供 oneMKL，并保证 `find_package(MKL CONFIG REQUIRED)` 能找到 `MKLConfig.cmake`。系统 oneMKL 只作为 fallback。如果 MKL package 获取暂时不稳定，可以先将 MKL acceleration jobs 标为 non-blocking，但 workflow 中必须存在这些 jobs，不能只写在 README 里。
+
+- [x] **Step 3: 添加 acceleration-on CI 命令**
+
+macOS Accelerate job：
+
+```bash
+uv tool install conan
+conan install . \
+  --profile:host=conan/profiles/macos-arm64-apple-clang \
+  --profile:build=conan/profiles/macos-arm64-apple-clang \
+  --output-folder=build/conan/debug-acceleration \
+  --build=missing \
+  -s:h build_type=Debug
+cmake --preset debug-acceleration
+cmake --build --preset debug-acceleration
+ctest --preset debug-acceleration -R EigenConfig
+```
+
+Ubuntu MKL job：
+
+```bash
+uv tool install conan
+conan install . \
+  --profile:host=conan/profiles/ubuntu-x86_64-gcc \
+  --profile:build=conan/profiles/ubuntu-x86_64-gcc \
+  --output-folder=build/conan/debug-acceleration \
+  --build=missing \
+  -s:h build_type=Debug \
+  -o '&:with_mkl=True'
+cmake --preset debug-acceleration
+cmake --build --preset debug-acceleration
+ctest --preset debug-acceleration -R EigenConfig
+```
+
+Windows MKL job：
+
+```powershell
+uv tool install conan
+conan install . `
+  --profile:host=conan/profiles/windows-x86_64-msvc `
+  --profile:build=conan/profiles/windows-x86_64-msvc `
+  --output-folder=build/conan/debug-acceleration `
+  --build=missing `
+  -s:h build_type=Debug `
+  -o '&:with_mkl=True'
+cmake --preset debug-acceleration
+cmake --build --preset debug-acceleration
+ctest --preset debug-acceleration -R EigenConfig
+```
+
+- [x] **Step 4: 添加 CI matrix 设计说明**
+
+`.github/workflows/ci.yml` 推荐使用 matrix 表达全平台 Debug jobs：
+
+```yaml
+strategy:
+  fail-fast: false
+  matrix:
+    include:
+      - os: ubuntu-latest
+        profile: conan/profiles/ubuntu-x86_64-gcc
+        preset: debug
+      - os: macos-latest
+        profile: conan/profiles/macos-arm64-apple-clang
+        preset: debug
+      - os: windows-latest
+        profile: conan/profiles/windows-x86_64-msvc
+        preset: debug
+```
+
+ASan job 单独留在 Ubuntu。Windows 不跑 sanitizer job。
+
+Acceleration-on jobs 可以使用单独 matrix：
+
+```yaml
+strategy:
+  fail-fast: false
+  matrix:
+    include:
+      - os: macos-latest
+        profile: conan/profiles/macos-arm64-apple-clang
+        preset: debug-acceleration
+        conan_options: ""
+      - os: ubuntu-latest
+        profile: conan/profiles/ubuntu-x86_64-gcc
+        preset: debug-acceleration
+        conan_options: "-o '&:with_mkl=True'"
+      - os: windows-latest
+        profile: conan/profiles/windows-x86_64-msvc
+        preset: debug-acceleration
+        conan_options: "-o '&:with_mkl=True'"
+```
 
 
 ### Task 7.2: 添加 README 构建说明
@@ -1600,22 +2157,26 @@ STL types, Eigen types, and template types do not cross this boundary.
 - `pgo_c` 构建为 shared library，并通过 selected concrete C++ template instantiations 暴露 C99 ABI。
 - `include/pgo_c/pgo.h` 能作为 C 编译，不暴露 STL、Eigen、C++ templates、exceptions、namespaces 或 C++ classes。
 - C API ownership/error 规则明确：handles 由 matching destroy functions 释放，descriptors 是 borrowed，错误通过 `pgo_status_t` + `pgo_error_t` 返回。
-- GitHub Actions CPU build/test jobs 通过。
+- `PGO_ENABLE_EIGEN_ACCELERATION=OFF` 默认构建通过；打开后 Apple 可走 Accelerate，Ubuntu/Windows 可在 oneMKL 可用时走 MKL。
+- PARDISO 被记录为 future linear solver backend，而不是 Eigen `MathBackend` 或 Eigen acceleration 开关的一部分。
+- GitHub Actions CPU build/test jobs 在 Ubuntu、macOS、Windows 三个平台通过；Ubuntu ASan/UBSan job 通过。
+- Eigen acceleration CI jobs 是可选验证，不作为默认全平台 CI 通过门槛。
 
 ## 推荐实现顺序
 
 1. 完成 Phase 0，先让构建和 CI 骨架站起来。
-2. 完成 Phase 1，建立 flat storage、rest mesh、DOF/reduced DOF。
-3. 完成 Phase 2，尽早获得可视化输出能力。
-4. 完成 Phase 3，用 derivative tests 保护 energy 实现。
-5. 完成 Phase 4，先用 quadratic system 验证 solver，再跑 mass-spring。
-6. 完成 Phase 5，生成 OBJ frames。
-7. 完成 Phase 6，暴露稳定的 C99 shared-library facade。
-8. 完成 Phase 7 和 Phase 8 后，再进入 Milestone 2 GPU backend。
+2. 完成 Phase 0.5，把 Eigen acceleration、MKL/Accelerate 和 PARDISO/solver backend 的边界写清楚。
+3. 完成 Phase 1，建立 flat storage、rest mesh、DOF/reduced DOF。
+4. 完成 Phase 2，尽早获得可视化输出能力。
+5. 完成 Phase 3，用 derivative tests 保护 energy 实现。
+6. 完成 Phase 4，先用 quadratic system 验证 solver，再跑 mass-spring。
+7. 完成 Phase 5，生成 OBJ frames。
+8. 完成 Phase 6，暴露稳定的 C99 shared-library facade。
+9. 完成 Phase 7 和 Phase 8 后，再进入 Milestone 2 GPU backend。
 
 ## 自检记录
 
-- 覆盖范围：计划覆盖 build system、CI、C++23 header-oriented core、Eigen backend layer、GPU-aware storage、rest/displacement 分离、DOF reduction、OBJ input/output、local energy assembly、mass-spring energy、Newton solver、example frames、C99 dynamic-library API、Alembic 后处理。
+- 覆盖范围：计划覆盖 build system、CI、Eigen acceleration 配置、C++23 header-oriented core、Eigen backend layer、GPU-aware storage、rest/displacement 分离、DOF reduction、OBJ input/output、local energy assembly、mass-spring energy、Newton solver、example frames、C99 dynamic-library API、Alembic 后处理。
 - 占位扫描：计划不包含 `TBD`、`TODO`、`implement later` 等未落实占位。
 - 类型一致性：核心名称统一使用 `RestMesh`、`DofLayout`、`Displacement`、`DirichletBoundary`、`ReducedDofMap`、`MassSpringEnergy`、`ReducedEnergyView`、`ObjFrameWriter`、`NewtonSolver`、`pgo_world_t`、`pgo_error_t`。
 - 范围控制：Vulkan、Slang、FEM、contact、IPC、GPU solvers 不进入 Milestone 1，但数据布局和 API 边界保持兼容。

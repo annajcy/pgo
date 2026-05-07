@@ -7,3 +7,7 @@ endif()
 if(PGO_BUILD_TESTS)
     find_package(GTest REQUIRED CONFIG)
 endif()
+
+if(PGO_BUILD_BENCHMARKS)
+    find_package(benchmark REQUIRED CONFIG)
+endif()

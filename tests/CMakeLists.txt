@@ -3,6 +3,7 @@ include(GoogleTest)
 add_executable(pgo_tests
     base/test_assert.cpp
     math/test_backend.cpp
+    math/test_eigen_config.cpp
     storage/test_storage.cpp
 )
 
