@@ -171,6 +171,9 @@ ctest --preset asan
 Benchmarks use Google Benchmark and are built as the standalone
 `pgo_benchmarks` executable. They are not registered as `ctest` tests because
 performance numbers are machine- and load-dependent.
+CI runs them with a short warm-up, repeated measurements, and aggregate-only
+reporting so the logs are useful for trend checks without pretending to be
+dedicated performance lab results.
 
 Build and run the baseline Eigen path:
 

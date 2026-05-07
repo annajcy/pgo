@@ -34,6 +34,9 @@ void benchmark_dense_matrix_multiply(benchmark::State& state) {
     Eigen::MatrixXd b = Eigen::MatrixXd::Random(size, size);
     Eigen::MatrixXd c(size, size);
 
+    c.noalias() = a * b;
+    benchmark::DoNotOptimize(c.data());
+
     for (auto _ : state) {
         c.noalias() = a * b;
         benchmark::DoNotOptimize(c.data());
