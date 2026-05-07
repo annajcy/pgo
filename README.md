@@ -135,6 +135,13 @@ ctest --preset debug-acceleration -R EigenConfig
 
 On Windows, use `.\scripts\install-onemkl\install-onemkl-windows.ps1` for the setup step.
 
+Note: accelerated builds link to oneMKL runtime DLLs. The setup scripts prepare
+the CI environment automatically. For local Windows benchmark runs, use the same
+PowerShell session after running the setup script, or make sure oneMKL's
+`mkl\latest\bin` and `compiler\latest\bin` directories are on `PATH`. For local
+Linux runs, make sure `mkl/latest/lib/intel64` is on `LD_LIBRARY_PATH` if your
+system linker does not already know that location.
+
 MKL is a math library suite. PARDISO is MKL's sparse direct solver.
 `Eigen::PardisoLDLT` is Eigen's wrapper around MKL PARDISO. PGO will model
 PARDISO as a linear solver backend, not as a MathBackend.

@@ -299,6 +299,13 @@ jobs:
       - name: Build benchmark
         run: cmake --build --preset ${{ matrix.preset }} --target pgo_benchmarks
 
+      - name: Check oneMKL runtime DLLs
+        if: matrix.needs_mkl && runner.os == 'Windows'
+        run: |
+          where.exe mkl_core.2.dll
+          where.exe mkl_intel_thread.2.dll
+          where.exe libiomp5md.dll
+
       - name: Run benchmark smoke
         if: runner.os != 'Windows'
         run: ./build/${{ matrix.preset }}/benchmarks/pgo_benchmarks --benchmark_min_time=0.01s --benchmark_repetitions=1

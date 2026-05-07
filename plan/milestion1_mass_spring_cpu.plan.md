@@ -520,7 +520,7 @@ conan install . \
 
 Linux 安装脚本通过 Intel APT repository 安装 `intel-oneapi-mkl-devel`，并校验默认安装位置提供 `MKLConfig.cmake`。在 GitHub Actions 中额外写入 `MKLROOT`、`MKL_DIR`、`CMAKE_PREFIX_PATH`、`LD_LIBRARY_PATH`、`LIBRARY_PATH`。
 
-Windows 安装脚本通过 winget 安装 `Intel.oneMKL`，并校验默认安装位置提供 `MKLConfig.cmake`。在 GitHub Actions 中额外写入 `MKLROOT`、`MKL_DIR`、`CMAKE_PREFIX_PATH`、`LIB`，同时用 `GITHUB_PATH` 暴露运行时 DLL 目录。
+Windows 安装脚本通过 winget 安装 `Intel.oneMKL`，并校验默认安装位置提供 `MKLConfig.cmake`。脚本写入 `MKLROOT`、`MKL_DIR`、`CMAKE_PREFIX_PATH`、`LIB`，同时把 `mkl/latest/bin`、`mkl/latest/redist/intel64`、`mkl/latest/lib/intel64`、`compiler/latest/bin` 中存在的目录加入运行时 `PATH`；在 GitHub Actions 中通过 `GITHUB_PATH` 暴露这些 DLL 目录。
 
 - [ ] **Step 4: 验证 Linux/Windows 系统 oneMKL 配置**
 
