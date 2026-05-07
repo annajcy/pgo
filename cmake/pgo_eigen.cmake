@@ -20,6 +20,37 @@ if(PGO_ENABLE_EIGEN_ACCELERATION)
 endif()
 
 if(PGO_SELECTED_EIGEN_ACCELERATION_BACKEND STREQUAL "MKL")
+    if(NOT MKL_DIR AND DEFINED ENV{MKLROOT})
+        list(PREPEND CMAKE_PREFIX_PATH "$ENV{MKLROOT}")
+
+        if(EXISTS "$ENV{MKLROOT}/lib/cmake/mkl/MKLConfig.cmake")
+            set(MKL_DIR "$ENV{MKLROOT}/lib/cmake/mkl" CACHE PATH "Path to oneMKL CMake package")
+        endif()
+    endif()
+
+    if(NOT MKL_DIR)
+        set(PGO_MKL_ROOT_CANDIDATES)
+
+        if(WIN32)
+            list(APPEND PGO_MKL_ROOT_CANDIDATES
+                "$ENV{ProgramFiles(x86)}/Intel/oneAPI/mkl/latest"
+                "$ENV{ProgramFiles}/Intel/oneAPI/mkl/latest"
+            )
+        elseif(UNIX)
+            list(APPEND PGO_MKL_ROOT_CANDIDATES
+                "/opt/intel/oneapi/mkl/latest"
+            )
+        endif()
+
+        foreach(PGO_MKL_ROOT_CANDIDATE IN LISTS PGO_MKL_ROOT_CANDIDATES)
+            if(EXISTS "${PGO_MKL_ROOT_CANDIDATE}/lib/cmake/mkl/MKLConfig.cmake")
+                list(PREPEND CMAKE_PREFIX_PATH "${PGO_MKL_ROOT_CANDIDATE}")
+                set(MKL_DIR "${PGO_MKL_ROOT_CANDIDATE}/lib/cmake/mkl" CACHE PATH "Path to oneMKL CMake package")
+                break()
+            endif()
+        endforeach()
+    endif()
+
     find_package(MKL CONFIG REQUIRED)
 
     target_compile_definitions(pgo_eigen_config INTERFACE

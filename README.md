@@ -114,26 +114,26 @@ cmake --build --preset debug-acceleration
 ctest --preset debug-acceleration -R EigenConfig
 ```
 
-On Linux and Windows, `AUTO` selects MKL. Enable the Conan MKL dependency when
-installing the acceleration toolchain:
+On Linux and Windows, `AUTO` selects MKL. Install oneMKL once through the
+project setup script if the machine does not already have it. The CMake
+configuration checks the standard oneMKL install locations directly.
 
 ```bash
+scripts/install-onemkl/install-onemkl-linux.sh
+
 conan install . \
   --profile:host=conan/profiles/ubuntu-x86_64-gcc \
   --profile:build=conan/profiles/ubuntu-x86_64-gcc \
   --output-folder=build/conan/debug-acceleration \
   --build=missing \
-  -s:h build_type=Debug \
-  -o '&:with_mkl=True'
+  -s:h build_type=Debug
 
 cmake --preset debug-acceleration
 cmake --build --preset debug-acceleration
 ctest --preset debug-acceleration -R EigenConfig
 ```
 
-If MKL comes from a system oneMKL install instead of Conan, omit
-`-o '&:with_mkl=True'` and expose `MKLConfig.cmake` through `MKL_DIR` or
-`CMAKE_PREFIX_PATH` before configuring the acceleration preset.
+On Windows, use `.\scripts\install-onemkl\install-onemkl-windows.ps1` for the setup step.
 
 MKL is a math library suite. PARDISO is MKL's sparse direct solver.
 `Eigen::PardisoLDLT` is Eigen's wrapper around MKL PARDISO. PGO will model
@@ -195,8 +195,8 @@ cmake --build --preset release-acceleration --target pgo_benchmarks
 ./build/release-acceleration/benchmarks/pgo_benchmarks
 ```
 
-On Linux and Windows acceleration builds, install the acceleration toolchain
-with `-o '&:with_mkl=True'` or provide a system oneMKL `MKLConfig.cmake`.
+On Linux and Windows acceleration builds, run the matching oneMKL setup script
+once if oneMKL is not already installed.
 
 ## Useful Notes
 

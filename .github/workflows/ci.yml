@@ -122,22 +122,22 @@ jobs:
         include:
           - os: macos-latest
             profile: conan/profiles/macos-arm64-apple-clang
-            conan_options: ""
+            needs_mkl: false
             cc: cc
             cxx: c++
             experimental: false
           - os: ubuntu-latest
             profile: conan/profiles/ubuntu-x86_64-gcc
-            conan_options: "-o '&:with_mkl=True'"
+            needs_mkl: true
             cc: gcc-13
             cxx: g++-13
-            experimental: true
+            experimental: false
           - os: windows-latest
             profile: conan/profiles/windows-x86_64-msvc
-            conan_options: "-o '&:with_mkl=True'"
+            needs_mkl: true
             cc: cl
             cxx: cl
-            experimental: true
+            experimental: false
     steps:
       - uses: actions/checkout@v4
 
@@ -159,6 +159,15 @@ jobs:
       - name: Install Conan
         run: uv tool install conan
 
+      - name: Install oneMKL
+        if: matrix.needs_mkl && runner.os == 'Linux'
+        run: bash scripts/install-onemkl/install-onemkl-linux.sh
+
+      - name: Install oneMKL
+        if: matrix.needs_mkl && runner.os == 'Windows'
+        shell: pwsh
+        run: .\scripts\install-onemkl\install-onemkl-windows.ps1
+
       - name: Install acceleration dependencies
         env:
           CC: ${{ matrix.cc }}
@@ -170,7 +179,6 @@ jobs:
           --output-folder=build/conan/debug-acceleration
           --build=missing
           -s:h build_type=Debug
-          ${{ matrix.conan_options }}
 
       - name: Configure
         env:
@@ -196,7 +204,7 @@ jobs:
             profile: conan/profiles/ubuntu-x86_64-gcc
             preset: release
             conan_output: build/conan/release
-            conan_options: ""
+            needs_mkl: false
             cc: gcc-13
             cxx: g++-13
             experimental: false
@@ -204,7 +212,7 @@ jobs:
             profile: conan/profiles/macos-arm64-apple-clang
             preset: release
             conan_output: build/conan/release
-            conan_options: ""
+            needs_mkl: false
             cc: cc
             cxx: c++
             experimental: false
@@ -212,7 +220,7 @@ jobs:
             profile: conan/profiles/windows-x86_64-msvc
             preset: release
             conan_output: build/conan/release
-            conan_options: ""
+            needs_mkl: false
             cc: cl
             cxx: cl
             experimental: false
@@ -220,7 +228,7 @@ jobs:
             profile: conan/profiles/macos-arm64-apple-clang
             preset: release-acceleration
             conan_output: build/conan/release-acceleration
-            conan_options: ""
+            needs_mkl: false
             cc: cc
             cxx: c++
             experimental: false
@@ -228,18 +236,18 @@ jobs:
             profile: conan/profiles/ubuntu-x86_64-gcc
             preset: release-acceleration
             conan_output: build/conan/release-acceleration
-            conan_options: "-o '&:with_mkl=True'"
+            needs_mkl: true
             cc: gcc-13
             cxx: g++-13
-            experimental: true
+            experimental: false
           - os: windows-latest
             profile: conan/profiles/windows-x86_64-msvc
             preset: release-acceleration
             conan_output: build/conan/release-acceleration
-            conan_options: "-o '&:with_mkl=True'"
+            needs_mkl: true
             cc: cl
             cxx: cl
-            experimental: true
+            experimental: false
     steps:
       - uses: actions/checkout@v4
 
@@ -261,6 +269,15 @@ jobs:
       - name: Install Conan
         run: uv tool install conan
 
+      - name: Install oneMKL
+        if: matrix.needs_mkl && runner.os == 'Linux'
+        run: bash scripts/install-onemkl/install-onemkl-linux.sh
+
+      - name: Install oneMKL
+        if: matrix.needs_mkl && runner.os == 'Windows'
+        shell: pwsh
+        run: .\scripts\install-onemkl\install-onemkl-windows.ps1
+
       - name: Install benchmark dependencies
         env:
           CC: ${{ matrix.cc }}
@@ -272,7 +289,6 @@ jobs:
           --output-folder=${{ matrix.conan_output }}
           --build=missing
           -s:h build_type=Release
-          ${{ matrix.conan_options }}
 
       - name: Configure
         env:

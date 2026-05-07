@@ -454,23 +454,24 @@ Phase 0 CI 只做 configure/build。等 Phase 1 创建 `tests/CMakeLists.txt` �
 - Ubuntu/Windows 平台 `AUTO` 选择 MKL。
 - 默认 `PGO_ENABLE_EIGEN_ACCELERATION=OFF`，保证普通开发和 CI 不要求 MKL/Accelerate 环境。
 - Apple Accelerate 是系统 framework，不通过 Conan 管理。
-- oneMKL 优先通过 Conan 管理；系统安装的 oneMKL 只作为 fallback，只要能提供 `MKLConfig.cmake` 即可。
-- Conan option 使用 `with_mkl`，默认 `False`。macOS 上 `with_mkl=True` 应直接判为 invalid configuration，避免 macOS acceleration job 意外拉取 MKL。
+- oneMKL 不通过 Conan 管理；Ubuntu/Windows acceleration 配置先确保系统 oneMKL 已安装，CMake 会检查 oneMKL 默认安装位置，也允许用户通过 `MKL_DIR` 或 `CMAKE_PREFIX_PATH` 指定自定义位置。
 - PARDISO 是 MKL 中的 sparse direct solver，但它不是 Eigen 的 `MathBackend`，也不是这个 acceleration option 的语义。后续 solver 层应单独引入 `PGO_CPU_LINEAR_SOLVER=EIGEN_SIMPLICIAL_LDLT/MKL_PARDISO/...`。
 - 选项名使用 `PGO_ENABLE_EIGEN_ACCELERATION`，不要使用拼写错误的 `acceloration`。
 
-### Task 0.5.1: 添加 Conan MKL option 和平台边界
+### Task 0.5.1: 添加系统 oneMKL 平台边界
 
 **文件:**
 - 修改: `conanfile.py`
+- 创建: `scripts/install-onemkl/install-onemkl-linux.sh`
+- 创建: `scripts/install-onemkl/install-onemkl-windows.ps1`
 
-- [x] **Step 1: 添加 `with_mkl` option**
+- [x] **Step 1: 保持 Conan 依赖不包含 MKL**
 
-`conanfile.py` 更新为：
+`conanfile.py` 只管理跨平台 C++ 包和测试/benchmark 依赖：
 
 ```python
 from conan import ConanFile
-from conan.errors import ConanInvalidConfiguration
+from conan.tools.cmake import CMakeDeps, CMakeToolchain
 
 
 class PgoRecipe(ConanFile):
@@ -478,36 +479,29 @@ class PgoRecipe(ConanFile):
     version = "0.1.0"
     package_type = "header-library"
     settings = "os", "compiler", "build_type", "arch"
-    options = {
-        "with_mkl": [True, False],
-    }
-    default_options = {
-        "with_mkl": False,
-    }
-    generators = "CMakeDeps", "CMakeToolchain"
 
-    def validate(self):
-        if self.options.with_mkl and self.settings.os == "Macos":
-            raise ConanInvalidConfiguration(
-                "with_mkl=True is disabled on macOS; use Apple Accelerate instead."
-            )
+    def generate(self):
+        deps = CMakeDeps(self)
+        deps.generate()
+
+        toolchain = CMakeToolchain(self, generator="Ninja")
+        toolchain.user_presets_path = None
+        toolchain.generate()
 
     def requirements(self):
         self.requires("eigen/3.4.0")
         self.requires("cli11/[>=2.4 <3]")
 
-        if self.options.with_mkl and self.settings.os != "Macos":
-            self.requires("mkl/[>=2024 <2027]")
-
     def build_requirements(self):
+        self.test_requires("benchmark/[>=1.9 <2]")
         self.test_requires("gtest/[>=1.14 <2]")
 ```
 
 设计约束：
 
-- macOS 不通过 Conan 拉取 MKL；macOS acceleration 只使用系统 Accelerate。`requirements()` 里也要避开 macOS MKL requirement，这样 `with_mkl=True` 时能稳定走到自定义 invalid configuration 信息，而不是先失败在 MKL package 解析。
-- Linux/Windows MKL acceleration jobs 必须在 `conan install` 时启用 `with_mkl=True`。
-- CMake 仍只使用 `find_package(MKL CONFIG REQUIRED)`，不关心 MKL 来自 Conan 还是系统安装。
+- macOS 不通过 Conan 拉取 MKL；macOS acceleration 只使用系统 Accelerate。`requirements()` 里不要出现 MKL requirement。
+- Linux/Windows MKL acceleration jobs 必须在 configure 前安装系统 oneMKL，并让 `find_package(MKL CONFIG REQUIRED)` 能找到 `MKLConfig.cmake`。
+- CMake 仍只使用 `find_package(MKL CONFIG REQUIRED)`，由系统 oneMKL 提供 `MKLConfig.cmake`。
 
 - [x] **Step 2: 验证默认 Conan 依赖不拉 MKL**
 
@@ -522,47 +516,39 @@ conan install . \
 
 期望：依赖图包含 Eigen/CLI11/GTest，不包含 MKL。
 
-- [ ] **Step 3: 验证 Linux/Windows MKL Conan 依赖**
+- [x] **Step 3: 添加 Linux/Windows oneMKL 安装脚本**
+
+Linux 安装脚本通过 Intel APT repository 安装 `intel-oneapi-mkl-devel`，并校验默认安装位置提供 `MKLConfig.cmake`。在 GitHub Actions 中额外写入 `MKLROOT`、`MKL_DIR`、`CMAKE_PREFIX_PATH`、`LD_LIBRARY_PATH`、`LIBRARY_PATH`。
+
+Windows 安装脚本通过 winget 安装 `Intel.oneMKL`，并校验默认安装位置提供 `MKLConfig.cmake`。在 GitHub Actions 中额外写入 `MKLROOT`、`MKL_DIR`、`CMAKE_PREFIX_PATH`、`LIB`，同时用 `GITHUB_PATH` 暴露运行时 DLL 目录。
+
+- [ ] **Step 4: 验证 Linux/Windows 系统 oneMKL 配置**
 
 Linux:
 
 ```bash
+scripts/install-onemkl/install-onemkl-linux.sh
 conan install . \
   --profile:host=conan/profiles/ubuntu-x86_64-gcc \
   --profile:build=conan/profiles/ubuntu-x86_64-gcc \
   --output-folder=build/conan/debug-acceleration \
   --build=missing \
-  -s:h build_type=Debug \
-  -o '&:with_mkl=True'
+  -s:h build_type=Debug
 ```
 
 Windows:
 
 ```powershell
+.\scripts\install-onemkl\install-onemkl-windows.ps1
 conan install . `
   --profile:host=conan/profiles/windows-x86_64-msvc `
   --profile:build=conan/profiles/windows-x86_64-msvc `
   --output-folder=build/conan/debug-acceleration `
   --build=missing `
-  -s:h build_type=Debug `
-  -o '&:with_mkl=True'
+  -s:h build_type=Debug
 ```
 
-期望：依赖图包含 MKL，并生成能让 `find_package(MKL CONFIG REQUIRED)` 成功的 CMake package files。
-
-- [x] **Step 4: 验证 macOS 禁用 `with_mkl=True`**
-
-```bash
-conan install . \
-  --profile:host=conan/profiles/macos-arm64-apple-clang \
-  --profile:build=conan/profiles/macos-arm64-apple-clang \
-  --output-folder=build/conan/debug-acceleration \
-  --build=missing \
-  -s:h build_type=Debug \
-  -o '&:with_mkl=True'
-```
-
-期望：Conan configure 阶段失败，错误信息说明 macOS 使用 Apple Accelerate，不使用 `with_mkl=True`。
+期望：Conan 依赖图不包含 MKL；系统 oneMKL 提供 `MKLConfig.cmake`，CMake configure 阶段能成功链接 `MKL::MKL`。
 
 ### Task 0.5.2: 添加 Eigen 配置 target
 
@@ -766,7 +752,7 @@ ctest --preset release-acceleration
 
 - Preset 不写死 `MKL` 或 `ACCELERATE`，统一使用 `PGO_EIGEN_ACCELERATION_BACKEND=AUTO`。
 - 平台差异由 CMake 自动选择：macOS -> Accelerate，Linux/Windows -> MKL。
-- 平台依赖由 Conan install 决定：macOS 不传 `with_mkl=True`，Linux/Windows acceleration install 传 `with_mkl=True`。
+- 平台依赖由系统环境决定：macOS 使用系统 Accelerate，Linux/Windows acceleration job 在 configure 前安装 oneMKL。
 
 - [x] **Step 4: 验证默认配置**
 
@@ -798,16 +784,16 @@ ctest --preset debug-acceleration -R EigenConfig
 
 - [ ] **Step 6: 验证 MKL 配置**
 
-仅在 Ubuntu/Windows 环境运行。推荐通过 Conan `with_mkl=True` 提供 oneMKL：
+仅在 Ubuntu/Windows 环境运行。先安装系统 oneMKL 并暴露 `MKLConfig.cmake`：
 
 ```bash
+scripts/install-onemkl/install-onemkl-linux.sh
 conan install . \
   --profile:host=conan/profiles/ubuntu-x86_64-gcc \
   --profile:build=conan/profiles/ubuntu-x86_64-gcc \
   --output-folder=build/conan/debug-acceleration \
   --build=missing \
-  -s:h build_type=Debug \
-  -o '&:with_mkl=True'
+  -s:h build_type=Debug
 ```
 
 然后运行：
@@ -1917,7 +1903,7 @@ PGO_ENABLE_EIGEN_ACCELERATION=OFF
 - `ubuntu-latest` + `debug-acceleration`，CMake `AUTO` 选择 MKL。
 - `windows-latest` + `debug-acceleration`，CMake `AUTO` 选择 MKL。
 
-MKL jobs 必须在 `conan install` 时启用 `-o '&:with_mkl=True'`，优先由 Conan 提供 oneMKL，并保证 `find_package(MKL CONFIG REQUIRED)` 能找到 `MKLConfig.cmake`。系统 oneMKL 只作为 fallback。如果 MKL package 获取暂时不稳定，可以先将 MKL acceleration jobs 标为 non-blocking，但 workflow 中必须存在这些 jobs，不能只写在 README 里。
+MKL jobs 必须在 CMake configure 前安装系统 oneMKL，并保证 `find_package(MKL CONFIG REQUIRED)` 能找到 `MKLConfig.cmake`。Conan 不负责 MKL；CI 复用 `scripts/install-onemkl/install-onemkl-linux.sh` 和 `scripts/install-onemkl/install-onemkl-windows.ps1` 完成平台安装。
 
 - [x] **Step 3: 添加 acceleration-on CI 命令**
 
@@ -1940,13 +1926,13 @@ Ubuntu MKL job：
 
 ```bash
 uv tool install conan
+scripts/install-onemkl/install-onemkl-linux.sh
 conan install . \
   --profile:host=conan/profiles/ubuntu-x86_64-gcc \
   --profile:build=conan/profiles/ubuntu-x86_64-gcc \
   --output-folder=build/conan/debug-acceleration \
   --build=missing \
-  -s:h build_type=Debug \
-  -o '&:with_mkl=True'
+  -s:h build_type=Debug
 cmake --preset debug-acceleration
 cmake --build --preset debug-acceleration
 ctest --preset debug-acceleration -R EigenConfig
@@ -1956,13 +1942,13 @@ Windows MKL job：
 
 ```powershell
 uv tool install conan
+.\scripts\install-onemkl\install-onemkl-windows.ps1
 conan install . `
   --profile:host=conan/profiles/windows-x86_64-msvc `
   --profile:build=conan/profiles/windows-x86_64-msvc `
   --output-folder=build/conan/debug-acceleration `
   --build=missing `
-  -s:h build_type=Debug `
-  -o '&:with_mkl=True'
+  -s:h build_type=Debug
 cmake --preset debug-acceleration
 cmake --build --preset debug-acceleration
 ctest --preset debug-acceleration -R EigenConfig
@@ -2000,15 +1986,15 @@ strategy:
       - os: macos-latest
         profile: conan/profiles/macos-arm64-apple-clang
         preset: debug-acceleration
-        conan_options: ""
+        needs_mkl: false
       - os: ubuntu-latest
         profile: conan/profiles/ubuntu-x86_64-gcc
         preset: debug-acceleration
-        conan_options: "-o '&:with_mkl=True'"
+        needs_mkl: true
       - os: windows-latest
         profile: conan/profiles/windows-x86_64-msvc
         preset: debug-acceleration
-        conan_options: "-o '&:with_mkl=True'"
+        needs_mkl: true
 ```
 
 
