@@ -65,7 +65,7 @@
       energy/
         energy_concepts.hpp
         energy_sum.hpp
-        mass_spring_energy.hpp
+        mass_spring_local_energy_provider.hpp
         reduced_energy.hpp
       geometry/
         rest_mesh.hpp
@@ -99,12 +99,15 @@
     mass_spring_cloth.cpp
   tests/
     CMakeLists.txt
+    assembly/
+      test_cpu_assembler.cpp
     base/
       test_assert.cpp
     dof/
       test_dof.cpp
     energy/
-      test_mass_spring_energy.cpp
+      test_energy_concepts.cpp
+      test_mass_spring_local_energy_provider.cpp
     geometry/
       test_rest_mesh.cpp
     io/
@@ -1360,69 +1363,429 @@ ctest --preset debug -R obj
 
 ## Phase 3: Local-Contribution Energy 和 CPU Assembly
 
-### Task 3.1: 添加 energy concepts 和 local matrix types
+**目标:** 把“局部物理公式”变成“全局可求导 sparse optimization system”。Phase 1/2 已经建立了 flat mesh、full displacement DOF、reduced DOF 和 OBJ pipeline；Phase 3 第一次引入真正的物理 energy，并让系统能够计算 full-space `E(u)`、`grad E(u)`、`H(u)`。
+
+**核心设计决策:**
+
+- Phase 3 的核心抽象是：
+
+```text
+E_full(u) = sum_i E_i(u)
+```
+
+其中 `local_id` 可以是一条 spring、一个 vertex term、一个 triangle/tet element、一个 contact stencil，或者未来 FEM mass/inertia contribution；不要假设 local term 一定是 edge 或 vertex。
+
+- Phase 3 的 energy 分层固定为：
+
+```text
+LocalEnergyModel -> LocalEnergyProvider -> CPUAssembler -> FullEnergy quantities
+```
+
+`LocalEnergyModel` 是 stateless static formula / material-law policy：它接收 local data 和 local displacement，不知道 full DOF、mesh topology、`local_id`、sparse matrix、boundary、solver 或 GPU backend。
+- `LocalEnergyProvider` 保持 **full-space local contribution provider** 语义：它接收 full displacement vector `u`，通过自己的 topology/rest/material data gather 需要的 local state，并返回 local value/gradient/Hessian。`local_dofs(local_id, dofs)` 返回的是 full DOF indices。
+- `LocalEnergyProvider` 只回答三件事：local term 数量、某个 local term 作用在哪些 full DOF 上、这个 local term 对 full-space energy 的 value/gradient/Hessian contribution 是什么。
+- `CPUAssembler` 是 adapter：`LocalEnergyProvider + CPUAssembler = FullEnergy quantities`。solver 和 `ReducedEnergyView` 面向的是 full-space energy，不直接依赖 local provider 或 local model。
+- finite difference helper 必须放在 Phase 3 最前面。`MassSpringLocalEnergyModel` 是第一个 nonlinear local energy model，解析 gradient/Hessian 容易写错；先建立 derivative oracle，可以在进入 Newton solver 前单独验证 local derivative 和 global assembly。
+- `local_hessian()` 默认只表示 **true analytic Hessian**。PSD projection、Gauss-Newton、diagonal regularization、modified Cholesky 都属于 Phase 4 solver/optimization strategy，不属于 energy definition。不要在 energy 层偷偷把 Hessian 改成 PSD，否则 finite difference Hessian test 会失去语义。
+- rest length 为零或过小时应在 `MassSpringLocalEnergyProvider` 构造或 `MassSpringLocalEnergyModel` evaluate 时直接 reject；current length 过小时只做数值防护以避免 NaN，derivative tests 不覆盖不可导的 singular current edge 构型。
+
+**实现顺序:** 先 `finite_difference.hpp`，再 `energy_concepts.hpp` / `local_matrix.hpp`，再 `cpu_assembler.hpp`，最后 `mass_spring_local_energy_provider.hpp`。这条顺序的目标是：不要在没有导数验算工具的情况下写 nonlinear Hessian。
+
+### Task 3.1: 添加 finite difference derivative oracle
+
+**文件:**
+- 创建: `include/pgo/math/finite_difference.hpp`
+- 创建: `tests/math/test_finite_difference.cpp`
+- 修改: `tests/CMakeLists.txt`
+
+- [ ] **Step 1: 实现 `finite_difference.hpp`**
+
+提供 central difference helper，只用于测试和诊断，不进入 runtime solver：
+
+```cpp
+namespace pgo::math {
+
+template <RealScalar T, class F>
+[[nodiscard]] DVec<T> finite_difference_gradient(
+    F&& value_function,
+    const DVec<T>& x,
+    T eps);
+
+template <RealScalar T, class Grad>
+[[nodiscard]] DMat<T> finite_difference_hessian_from_gradient(
+    Grad&& gradient_function,
+    const DVec<T>& x,
+    T eps);
+
+} // namespace pgo::math
+```
+
+语义要求：
+
+- `finite_difference_gradient(f, x, eps)` 使用：
+
+```text
+g_i = (f(x + eps e_i) - f(x - eps e_i)) / (2 eps)
+```
+
+- `finite_difference_hessian_from_gradient(grad, x, eps)` 使用：
+
+```text
+H_col_i = (grad(x + eps e_i) - grad(x - eps e_i)) / (2 eps)
+```
+
+- helper 内部可以复制 `x` 生成 `x_plus` / `x_minus`，但不能修改 caller 传入的 `x`。
+- `eps <= 0` 时抛出 `std::runtime_error`。
+- `gradient_function` 返回 `DVec<T>` 或写入 output buffer 这两种形式二选一即可；Phase 3 推荐先实现返回 `DVec<T>` 的版本，保持测试代码简单。
+
+- [ ] **Step 2: 添加 finite difference 自测**
+
+`tests/math/test_finite_difference.cpp` 使用 `namespace pgo::math::test`。用二次函数验证 FD helper 本身：
+
+```text
+f(x, y) = x^2 + 3xy + 2y^2
+grad = [2x + 3y, 3x + 4y]
+H = [[2, 3], [3, 4]]
+```
+
+测试内容：
+
+- `finite_difference_gradient` 在 `x = [0.7, -1.2]` 附近与解析 gradient 匹配。
+- `finite_difference_hessian_from_gradient` 在同一点与解析 Hessian 匹配。
+- `eps <= 0` 抛出异常。
+
+- [ ] **Step 3: 把测试加入 `tests/CMakeLists.txt`**
+
+```cmake
+add_executable(pgo_tests
+    base/test_assert.cpp
+    math/test_backend.cpp
+    math/test_eigen_config.cpp
+    math/test_finite_difference.cpp
+    geometry/test_rest_mesh.cpp
+    dof/test_dof.cpp
+    io/test_obj_io.cpp
+)
+```
+
+- [ ] **Step 4: 运行 finite difference 测试**
+
+```bash
+cmake --build --preset debug
+ctest --preset debug -R finite
+```
+
+期望：`finite_difference` 相关测试全部通过。
+
+### Task 3.2: 添加 energy concepts 和 local matrix types
 
 **文件:**
 - 创建: `include/pgo/assembly/local_matrix.hpp`
 - 创建: `include/pgo/energy/energy_concepts.hpp`
+- 创建: `tests/energy/test_energy_concepts.cpp`
+- 修改: `tests/CMakeLists.txt`
 
 - [ ] **Step 1: 定义 local aliases**
 
+`include/pgo/assembly/local_matrix.hpp` 提供：
+
 ```cpp
-template <pgo::math::ScalarLike T>
+namespace pgo::assembly {
+
+template <pgo::math::RealScalar T>
 using LocalVector = pgo::math::DVec<T>;
 
-template <pgo::math::ScalarLike T>
+template <pgo::math::RealScalar T>
 using LocalMatrix = pgo::math::DMat<T>;
+
+} // namespace pgo::assembly
 ```
 
-- [ ] **Step 2: 定义 concepts**
+设计约束：
 
-`FullEnergy` 要求：
+- Phase 3 的 local vector/matrix 可以使用动态 Eigen 类型。每条 spring 的 local size 是 `2 * Dim`，后续 GPU 不复用 Eigen local matrix，只复用 local contribution API 语义。
+- local aliases 属于 `assembly/`，因为它们描述 local-to-global assembly 的中间数据，不是 geometry storage。
 
-- `value(u) -> T`
-- `gradient(u, g)`
-- `hessian(u, H)`
+- [ ] **Step 2: 定义 `FullEnergy` concept**
 
-`LocalEnergy` 要求：
+`include/pgo/energy/energy_concepts.hpp` 提供 solver-facing full-space energy concept：
 
-- `local_count()`
-- `local_dofs(local_id, dofs)`
-- `local_value(local_id, u)`
-- `local_gradient(local_id, u, local_g)`
-- `local_hessian(local_id, u, local_H)`
+```cpp
+namespace pgo::energy {
 
+template <class Energy, class T>
+concept FullEnergy = pgo::math::RealScalar<T> && requires(
+    const Energy& energy,
+    const pgo::math::DVec<T>& u,
+    T& value,
+    pgo::math::DVec<T>& gradient,
+    pgo::math::SparseMat<T>& hessian
+) {
+    { energy.value(u) } -> std::same_as<T>;
+    energy.gradient(u, gradient);
+    energy.hessian(u, hessian);
+    energy.value_gradient_hessian(u, value, gradient, hessian);
+};
 
-### Task 3.2: 添加 CPU local energy assembler
+} // namespace pgo::energy
+```
+
+设计约束：
+
+- `FullEnergy` 工作在 full displacement space，不知道 reduced variables。
+- `value_gradient_hessian` 是 solver 主路径：Newton 每轮通常同时需要三者。单独的 `value` / `gradient` / `hessian` 用于测试、调试和 line search。
+
+- [ ] **Step 3: 定义 `LocalEnergyModel`、`FusedLocalEnergyModel`、`LocalEnergyProvider` 和 `FusedLocalEnergyProvider` concepts**
+
+`LocalEnergyModel` 是单个局部项公式 / material law 层，最小接口：
+
+```cpp
+namespace pgo::energy {
+
+template <class Model, class T, class LocalData>
+concept LocalEnergyModel = pgo::math::RealScalar<T> && requires(
+    const LocalData& local_data,
+    const pgo::assembly::LocalVector<T>& local_u,
+    pgo::assembly::LocalVector<T>& local_g,
+    pgo::assembly::LocalMatrix<T>& local_H
+) {
+    { Model::local_dof_count(local_data) } -> std::convertible_to<std::size_t>;
+    { Model::value(local_data, local_u) } -> std::same_as<T>;
+    Model::gradient(local_data, local_u, local_g);
+    Model::hessian(local_data, local_u, local_H);
+};
+
+template <class Model, class T, class LocalData>
+concept FusedLocalEnergyModel = LocalEnergyModel<Model, T, LocalData> && requires(
+    const LocalData& local_data,
+    const pgo::assembly::LocalVector<T>& local_u,
+    T& value,
+    pgo::assembly::LocalVector<T>& local_g,
+    pgo::assembly::LocalMatrix<T>& local_H
+) {
+    Model::value_gradient_hessian(local_data, local_u, value, local_g, local_H);
+};
+
+} // namespace pgo::energy
+```
+
+`LocalEnergyProvider` 是 assembler-facing indexed collection / gather 层，最小接口：
+
+```cpp
+namespace pgo::energy {
+
+template <class EnergyProvider, class T>
+concept LocalEnergyProvider = pgo::math::RealScalar<T> && requires(
+    const EnergyProvider& energy_provider,
+    std::size_t local_id,
+    const pgo::math::DVec<T>& full_u,
+    std::vector<std::size_t>& dofs,
+    pgo::assembly::LocalVector<T>& local_g,
+    pgo::assembly::LocalMatrix<T>& local_H
+) {
+    { energy_provider.local_count() } -> std::convertible_to<std::size_t>;
+    energy_provider.local_dofs(local_id, dofs);
+    { energy_provider.local_value(local_id, full_u) } -> std::same_as<T>;
+    energy_provider.local_gradient(local_id, full_u, local_g);
+    energy_provider.local_hessian(local_id, full_u, local_H);
+};
+
+template <class EnergyProvider, class T>
+concept FusedLocalEnergyProvider = LocalEnergyProvider<EnergyProvider, T> && requires(
+    const EnergyProvider& energy_provider,
+    std::size_t local_id,
+    const pgo::math::DVec<T>& full_u,
+    T& value,
+    pgo::assembly::LocalVector<T>& local_g,
+    pgo::assembly::LocalMatrix<T>& local_H
+) {
+    energy_provider.local_value_gradient_hessian(local_id, full_u, value, local_g, local_H);
+};
+
+} // namespace pgo::energy
+```
+
+语义要求：
+
+- `LocalEnergyModel` 是 stateless static API，不知道 full displacement vector、`local_id`、full DOF indices、mesh topology 或 sparse assembly。
+- `LocalEnergyProvider` 负责从 full `u` gather local displacement，并从 mesh/rest/material arrays gather model 需要的 `LocalData`。
+- `local_dofs(local_id, dofs)` 必须写入 full DOF indices，例如 2D 三点两弹簧里 spring 0 返回 `[0, 1, 2, 3]`，spring 1 返回 `[2, 3, 4, 5]`。
+- `local_gradient(local_id, full_u, local_g)` 返回 `dE_i / du_local`，并满足 `local_g.size() == dofs.size()`。
+- `local_hessian(local_id, full_u, local_H)` 返回 true local Hessian，并满足 `local_H.rows() == dofs.size()`、`local_H.cols() == dofs.size()`。
+- `local_value_gradient_hessian` 是 provider 的可选 performance API；assembler 优先使用 fused provider API，避免重复计算 current positions、edge vector、edge length、direction 等中间量。
+- 不要在 model/provider concepts 中出现 `assemble`、`global_gradient`、`global_hessian`、`reduced_gradient`、`boundary`、`dof_map` 等职责。
+
+- [ ] **Step 4: 添加 concept smoke tests**
+
+`tests/energy/test_energy_concepts.cpp` 使用 `namespace pgo::energy::test`。定义一个最小 toy local energy：
+
+```cpp
+class ToyEdgeEnergy {
+public:
+    [[nodiscard]] std::size_t local_count() const { return 1; }
+
+    void local_dofs(std::size_t, std::vector<std::size_t>& dofs) const {
+        dofs = {0, 1};
+    }
+
+    [[nodiscard]] double local_value(std::size_t, const pgo::math::DVec<double>& u) const {
+        return 0.5 * (u[0] - u[1]) * (u[0] - u[1]);
+    }
+
+    void local_gradient(std::size_t, const pgo::math::DVec<double>& u, pgo::assembly::LocalVector<double>& g) const {
+        g.resize(2);
+        g[0] = u[0] - u[1];
+        g[1] = u[1] - u[0];
+    }
+
+    void local_hessian(std::size_t, const pgo::math::DVec<double>&, pgo::assembly::LocalMatrix<double>& H) const {
+        H.resize(2, 2);
+        H << 1.0, -1.0,
+            -1.0, 1.0;
+    }
+};
+```
+
+测试内容：
+
+- `static_assert(pgo::energy::LocalEnergyProvider<ToyEdgeEnergy, double>)`。
+- `static_assert(!pgo::energy::FusedLocalEnergyProvider<ToyEdgeEnergy, double>)`。
+- local gradient/Hessian size 与 `local_dofs` size 一致。
+
+- [ ] **Step 5: 运行 energy concept 测试**
+
+```bash
+cmake --build --preset debug
+ctest --preset debug -R EnergyConcept
+```
+
+### Task 3.3: 添加 CPU local energy assembler
 
 **文件:**
 - 创建: `include/pgo/assembly/cpu_assembler.hpp`
+- 创建: `tests/assembly/test_cpu_assembler.cpp`
+- 修改: `tests/CMakeLists.txt`
 
-- [ ] **Step 1: 实现 assembler**
+- [ ] **Step 1: 实现 stateless assembly functions**
 
-提供：
+`include/pgo/assembly/cpu_assembler.hpp` 提供：
 
-- `assemble_value(energy, u)`
-- `assemble_gradient(energy, u, g)`
-- `assemble_hessian(energy, u, H)`
+```cpp
+namespace pgo::assembly {
+
+template <pgo::math::RealScalar T, class EnergyProvider>
+    requires pgo::energy::LocalEnergyProvider<EnergyProvider, T>
+[[nodiscard]] T assemble_value(const EnergyProvider& energy_provider, const pgo::math::DVec<T>& full_u);
+
+template <pgo::math::RealScalar T, class EnergyProvider>
+    requires pgo::energy::LocalEnergyProvider<EnergyProvider, T>
+void assemble_gradient(
+    const EnergyProvider& energy_provider,
+    const pgo::math::DVec<T>& full_u,
+    pgo::math::DVec<T>& full_gradient);
+
+template <pgo::math::RealScalar T, class EnergyProvider>
+    requires pgo::energy::LocalEnergyProvider<EnergyProvider, T>
+void assemble_hessian(
+    const EnergyProvider& energy_provider,
+    const pgo::math::DVec<T>& full_u,
+    pgo::math::SparseMat<T>& full_hessian);
+
+template <pgo::math::RealScalar T, class EnergyProvider>
+    requires pgo::energy::LocalEnergyProvider<EnergyProvider, T>
+void assemble_value_gradient_hessian(
+    const EnergyProvider& energy_provider,
+    const pgo::math::DVec<T>& full_u,
+    T& value,
+    pgo::math::DVec<T>& full_gradient,
+    pgo::math::SparseMat<T>& full_hessian);
+
+} // namespace pgo::assembly
+```
+
+如果 C++ concept 写法中 requires 子句不方便表达，允许改成普通模板加 `static_assert(pgo::energy::LocalEnergyProvider<EnergyProvider, T>)`，但外部 API 名字保持不变。
 
 实现要求：
 
-- 遍历 `local_id`。
-- 通过 `local_dofs` scatter local gradient。
-- 通过 triplets scatter local Hessian。
-- Hessian 使用 `math::SparseMat<T>`。
+- assembler 是 stateless free-function utility，不拥有 mesh、不拥有 boundary、不缓存 solver state。
+- `assemble_value` 遍历 `[0, energy.local_count())` 并累加 `local_value`。
+- `assemble_gradient` 先把 `full_gradient` resize 到 `full_u.size()` 并置零，再通过 `local_dofs` scatter：
 
+```cpp
+full_gradient[dofs[a]] += local_g[a];
+```
 
-### Task 3.3: 添加 MassSpringEnergy
+- `assemble_hessian` 使用 `std::vector<pgo::math::Triplet<T>>` scatter local Hessian：
+
+```cpp
+triplets.emplace_back(dofs[a], dofs[b], local_H(a, b));
+```
+
+然后 `SparseMat<T>(full_u.size(), full_u.size())` + `setFromTriplets`。重复 triplets 必须由 Eigen 累加。
+- `assemble_value_gradient_hessian` 优先调用 `FusedLocalEnergyProvider` 的 `local_value_gradient_hessian`；如果 provider 没有 fused API，则 fallback 到 `local_value`、`local_gradient`、`local_hessian` 三个接口。
+- 每个 local term assembly 前后都要验证尺寸：
+
+```text
+dofs.size() == local_g.size()
+local_H.rows() == dofs.size()
+local_H.cols() == dofs.size()
+```
+
+不满足时抛出 `std::runtime_error`。
+- 对每个 `dofs[a]` 验证 `dofs[a] < full_u.size()`，防止坏 local map 进入 sparse assembly。
+
+- [ ] **Step 2: 添加 toy assembly 测试**
+
+`tests/assembly/test_cpu_assembler.cpp` 使用 `namespace pgo::assembly::test`。用 Task 3.2 的 `ToyEdgeEnergy` 或等价测试类型验证：
+
+- `assemble_value` 对 `u = [2, -1]` 返回 `0.5 * 9 = 4.5`。
+- `assemble_gradient` 返回 `[3, -3]`。
+- `assemble_hessian` 返回：
+
+```text
+[[1, -1],
+ [-1, 1]]
+```
+
+- `assemble_value_gradient_hessian` 在 non-fused energy 上能 fallback，结果与单独 assembly 一致。
+
+- [ ] **Step 3: 添加 shared DOF scatter 测试**
+
+构造一个 2D 三点两弹簧形状的 toy local energy，`local_dofs(0) = [0,1,2,3]`，`local_dofs(1) = [2,3,4,5]`。每个 local term 给固定 local gradient `ones(4)`。
+
+验证 assembled full gradient：
+
+```text
+[1, 1, 2, 2, 1, 1]
+```
+
+这个测试确保共享 vertex 的 DOF contribution 会累加，而不是覆盖。
+
+- [ ] **Step 4: 添加 bad local energy 防御测试**
+
+测试以下错误会抛出：
+
+- `local_gradient` size 与 `local_dofs` size 不一致。
+- `local_hessian` shape 与 `local_dofs` size 不一致。
+- `local_dofs` 返回超出 `full_u.size()` 的 full DOF index。
+
+- [ ] **Step 5: 运行 assembler 测试**
+
+```bash
+cmake --build --preset debug
+ctest --preset debug -R CPUAssembler
+```
+
+### Task 3.4: 添加 MassSpringLocalEnergyModel 和 MassSpringLocalEnergyProvider
 
 **文件:**
-- 创建: `include/pgo/energy/mass_spring_energy.hpp`
-- 修改: `tests/energy/test_mass_spring_energy.cpp`
+- 创建: `include/pgo/energy/mass_spring_local_energy_provider.hpp`
+- 创建: `tests/energy/test_mass_spring_local_energy_provider.cpp`
+- 修改: `tests/CMakeLists.txt`
 
-- [ ] **Step 1: 实现 `MassSpringEnergy<T, Dim>`**
+- [ ] **Step 1: 实现 `MassSpringLocalData<T, Dim>` 和 `MassSpringLocalEnergyModel<T, Dim>`**
 
-单条 spring 的公式：
+单条 spring 的 local energy model：
 
 ```text
 E_e(u) = 0.5 * k * (||x_i - x_j|| - L)^2
@@ -1431,61 +1794,186 @@ x_j = X_j + u_j
 L = ||X_i - X_j||
 ```
 
-要求：
+推荐 API：
 
-- `local_count()` 等于 `mesh.num_edges()`。
-- `local_dofs(edge_id, dofs)` 通过 `mesh.edge_vertex(edge_id, 0/1)` 取端点，并返回 `[i0, i1, ..., j0, j1, ...]` 对应的 full displacement DOFs。
-- `local_gradient` 和 `local_hessian` 使用解析导数。
-- 对零长度或极短 current edge 做 epsilon clamp，避免 NaN。
+```cpp
+namespace pgo::energy {
 
-- [ ] **Step 2: 添加 derivative tests**
+template <pgo::math::RealScalar T, int Dim>
+struct MassSpringLocalData {
+    pgo::math::Vec<T, Dim> rest_i;
+    pgo::math::Vec<T, Dim> rest_j;
+    T stiffness;
+    T min_length;
+};
+
+template <pgo::math::RealScalar T, int Dim>
+class MassSpringLocalEnergyModel {
+public:
+    [[nodiscard]] static std::size_t local_dof_count(const MassSpringLocalData<T, Dim>& data);
+    [[nodiscard]] static T value(const MassSpringLocalData<T, Dim>& data,
+                                 const pgo::assembly::LocalVector<T>& local_u);
+    static void gradient(const MassSpringLocalData<T, Dim>& data, const pgo::assembly::LocalVector<T>& local_u,
+                         pgo::assembly::LocalVector<T>& local_g);
+    static void hessian(const MassSpringLocalData<T, Dim>& data, const pgo::assembly::LocalVector<T>& local_u,
+                        pgo::assembly::LocalMatrix<T>& local_H);
+    static void value_gradient_hessian(const MassSpringLocalData<T, Dim>& data,
+                                       const pgo::assembly::LocalVector<T>& local_u, T& value,
+                                       pgo::assembly::LocalVector<T>& local_g,
+                                       pgo::assembly::LocalMatrix<T>& local_H);
+};
+```
+
+实现要求：
+
+- `local_u` 的 order 固定为 `[u_i components..., u_j components...]`。
+- `local_dof_count(data) == 2 * Dim`。
+- `data.stiffness < 0`、`data.min_length <= 0`、rest length `<= data.min_length` 时抛出 `std::runtime_error`。
+- `local_hessian` 返回 true analytic Hessian，不做 PSD projection。
+
+- [ ] **Step 2: 实现 `MassSpringLocalEnergyProvider<T, Dim>`**
+
+Provider 是 mesh/full-u/material gather 层：
+
+```cpp
+template <pgo::math::RealScalar T, int Dim>
+class MassSpringLocalEnergyProvider {
+public:
+    MassSpringLocalEnergyProvider(const pgo::geometry::RestMesh<T, Dim>& mesh, T uniform_stiffness,
+                                  T min_length = std::sqrt(std::numeric_limits<T>::epsilon()));
+    MassSpringLocalEnergyProvider(const pgo::geometry::RestMesh<T, Dim>& mesh,
+                                  pgo::storage::ConstArrayView<T> stiffnesses,
+                                  T min_length = std::sqrt(std::numeric_limits<T>::epsilon()));
+
+    [[nodiscard]] std::size_t local_count() const;
+    [[nodiscard]] std::size_t max_local_dofs() const;
+
+    void local_dofs(std::size_t edge_id, std::vector<std::size_t>& dofs) const;
+
+    [[nodiscard]] T local_value(std::size_t edge_id, const pgo::math::DVec<T>& full_u) const;
+    void local_gradient(std::size_t edge_id, const pgo::math::DVec<T>& full_u, pgo::assembly::LocalVector<T>& local_g) const;
+    void local_hessian(std::size_t edge_id, const pgo::math::DVec<T>& full_u, pgo::assembly::LocalMatrix<T>& local_H) const;
+
+    void local_value_gradient_hessian(
+        std::size_t edge_id,
+        const pgo::math::DVec<T>& full_u,
+        T& value,
+        pgo::assembly::LocalVector<T>& local_g,
+        pgo::assembly::LocalMatrix<T>& local_H) const;
+};
+} // namespace pgo::energy
+```
+
+Provider 实现要求：
+
+- `local_count() == mesh.num_edges()`。
+- `max_local_dofs() == 2 * Dim`。
+- uniform stiffness constructor 将同一个 stiffness 复制到所有 edges。
+- per-edge stiffness constructor 将 input view 复制到 provider 内部，要求数量等于 `mesh.num_edges()`。
+- 任意 stiffness `< 0` 时抛出 `std::runtime_error`。
+- `local_dofs(edge_id, dofs)` 通过 `mesh.edge_vertex(edge_id, 0/1)` 取端点，并返回：
+
+```text
+[i0, i1, ..., i(Dim-1), j0, j1, ..., j(Dim-1)]
+```
+
+其中 full DOF index 使用 `vertex * Dim + component`，和 `DofLayout<Dim>` 一致。
+- 构造时遍历所有 edges，计算 rest length `L`。如果 `L <= min_length_`，抛出 `std::runtime_error`，不要让零长度 rest spring 进入 solver。
+- provider 的 `local_value`、`local_gradient`、`local_hessian` 使用 full displacement `u` gather local displacement，然后调用 `MassSpringLocalEnergyModel` static API。
+
+- [ ] **Step 3: 明确 mass-spring 解析导数公式**
+
+对单条 edge，令：
+
+```text
+d = x_i - x_j
+r = ||d||
+L = ||X_i - X_j||
+n = d / r
+```
+
+当 `r > min_length_` 时，对 `d` 的导数为：
+
+```text
+grad_d = k * (r - L) * n
+H_d = k * (n n^T + (1 - L / r) * (I - n n^T))
+```
+
+映射到 local DOF order `[u_i, u_j]`：
+
+```text
+local_g = [ grad_d, -grad_d ]
+
+local_H = [  H_d, -H_d
+            -H_d,  H_d ]
+```
+
+当 `r <= min_length_` 时，能量仍按 clamped `r_safe = min_length_` 做数值防护，gradient/Hessian 使用稳定 fallback，保证不产生 NaN。这个分支只用于避免 solver 崩溃；finite difference derivative tests 应选择远离 `r = 0` 的构型。
+
+- [ ] **Step 4: 添加 local model/provider smoke tests**
+
+`tests/energy/test_mass_spring_local_energy_provider.cpp` 使用 `namespace pgo::energy::test`。测试：
+
+- `static_assert(pgo::energy::LocalEnergyModel<MassSpringLocalEnergyModel<double, 2>, double, MassSpringLocalData<double, 2>>)`。
+- `static_assert(pgo::energy::FusedLocalEnergyModel<MassSpringLocalEnergyModel<double, 2>, double, MassSpringLocalData<double, 2>>)`。
+- `static_assert(pgo::energy::LocalEnergyProvider<MassSpringLocalEnergyProvider<double, 2>, double>)`。
+- `static_assert(pgo::energy::FusedLocalEnergyProvider<MassSpringLocalEnergyProvider<double, 2>, double>)`。
+- `local_count() == mesh.num_edges()`。
+- `max_local_dofs() == 2 * Dim`。
+- `local_dofs(0, dofs)` 返回 `[0, 1, 2, 3]`（2D）或 `[0, 1, 2, 3, 4, 5]`（3D）。
+- rest state 下 `local_value == 0`，`local_gradient` norm 为 0。
+- 拉伸一个端点后 `local_value > 0`。
+- 构造包含零长度 rest edge 的 mesh 时抛出异常。
+- per-edge stiffness 数量不匹配时抛出异常。
+- per-edge stiffness 包含负值时抛出异常。
+- 两条 spring 使用不同 stiffness 时，各自 `local_value(edge_id, full_u)` 按对应 stiffness 缩放。
+
+- [ ] **Step 5: 添加 finite-difference local derivative tests**
+
+用单条 2D spring，选择远离 singularity 的 displacement，例如：
+
+```text
+X0 = (0, 0)
+X1 = (1, 0)
+u0 = (0.1, 0.2)
+u1 = (0.35, -0.15)
+```
 
 测试：
 
-- rest state energy 为 0。
-- rest state gradient 为 0。
-- 拉伸一个端点后 energy 增大。
-- finite difference gradient 与解析 gradient 匹配。
-- finite difference Hessian 与解析 Hessian 匹配。
+- `MassSpringLocalEnergyModel::gradient(data, local_u, analytic_g)` 与 `finite_difference_gradient(local_value_lambda, local_u, eps)` 匹配。
+- `MassSpringLocalEnergyModel::hessian(data, local_u, analytic_H)` 与 `finite_difference_hessian_from_gradient(local_gradient_lambda, local_u, eps)` 匹配。
+- `MassSpringLocalEnergyProvider::local_gradient(0, full_u, analytic_g)` 与同一 local order 的 finite difference 匹配。
+- `MassSpringLocalEnergyProvider::local_hessian(0, full_u, analytic_H)` 与同一 local order 的 finite difference 匹配。
+- 至少覆盖一个压缩但非 singular 的状态，确认 true Hessian 允许 indefinite，不要求 PSD。
 
-- [ ] **Step 3: 运行测试**
+测试里的 `local_u` 可以通过 helper scatter 到 full `u`，但比较对象必须是 local DOF order 对应的 local gradient/Hessian。
 
-```bash
-cmake --build --preset debug
-ctest --preset debug -R mass_spring
-```
+- [ ] **Step 6: 添加 global assembly derivative tests**
 
-### Task 3.4: 添加 finite difference helper
+创建三点两弹簧 2D mesh，通过 `CPUAssembler` 组装 full energy/gradient/Hessian：
 
-**文件:**
-- 创建: `include/pgo/math/finite_difference.hpp`
-- 修改: `tests/math/test_finite_difference.cpp`
+- 用 `assemble_value` 和 `finite_difference_gradient` 验证 assembled full gradient。
+- 用 `assemble_gradient` 和 `finite_difference_hessian_from_gradient` 验证 assembled sparse Hessian。
+- 验证共享 vertex 的 gradient contribution 会累加。
 
-- [ ] **Step 1: 实现 helper**
-
-提供：
-
-- `finite_difference_gradient(f, x, eps)`
-- `finite_difference_hessian_from_gradient(grad, x, eps)`
-
-使用 central difference。
-
-- [ ] **Step 2: 添加测试**
-
-用函数：
+这个测试用于区分：
 
 ```text
-f(x, y) = x^2 + 3xy + 2y^2
-grad = [2x + 3y, 3x + 4y]
-H = [[2, 3], [3, 4]]
+local derivative bug
+local_dofs ordering bug
+local -> global scatter bug
+triplet accumulation bug
 ```
 
-- [ ] **Step 3: 运行测试**
+- [ ] **Step 7: 运行 mass-spring 和 assembler 相关测试**
 
 ```bash
 cmake --build --preset debug
-ctest --preset debug -R finite
+ctest --preset debug -R "MassSpring|CPUAssembler|finite"
 ```
+
+期望：finite difference、CPU assembler、MassSpringLocalEnergyModel / MassSpringLocalEnergyProvider 测试全部通过。
 
 ## Phase 4: Reduced Energy 和 Newton Solver
 
@@ -2229,7 +2717,7 @@ STL types, Eigen types, and template types do not cross this boundary.
 - Rest positions `X` 在求解过程中保持 immutable。
 - OBJ frame output 写出 `X + u`。
 - Mesh/geometry storage 保持 flat、index-based。
-- Energy model 暴露 local contribution API，适合 CPU assembly 和未来 GPU dispatch。
+- Energy model/provider 暴露 local contribution API，适合 CPU assembly 和未来 GPU dispatch。
 - `pgo_c` 构建为 shared library，并通过 selected concrete C++ template instantiations 暴露 C99 ABI。
 - `include/pgo_c/pgo.h` 能作为 C 编译，不暴露 STL、Eigen、C++ templates、exceptions、namespaces 或 C++ classes。
 - C API ownership/error 规则明确：handles 由 matching destroy functions 释放，descriptors 是 borrowed，错误通过 `pgo_status_t` + `pgo_error_t` 返回。
@@ -2252,7 +2740,7 @@ STL types, Eigen types, and template types do not cross this boundary.
 
 ## 自检记录
 
-- 覆盖范围：计划覆盖 build system、CI、Eigen acceleration 配置、C++23 header-oriented core、Eigen backend layer、GPU-aware storage、rest/displacement 分离、DOF reduction、OBJ input/output、local energy assembly、mass-spring energy、Newton solver、example frames、C99 dynamic-library API、Alembic 后处理。
+- 覆盖范围：计划覆盖 build system、CI、Eigen acceleration 配置、C++23 header-oriented core、Eigen backend layer、GPU-aware storage、rest/displacement 分离、DOF reduction、OBJ input/output、local energy model/provider assembly、mass-spring energy、Newton solver、example frames、C99 dynamic-library API、Alembic 后处理。
 - 占位扫描：计划不包含 `TBD`、`TODO`、`implement later` 等未落实占位。
-- 类型一致性：核心名称统一使用 `RestMesh`、`DofLayout`、`Displacement`、`DirichletBoundary`、`ReducedDofMap`、`MassSpringEnergy`、`ReducedEnergyView`、`ObjFrameWriter`、`NewtonSolver`、`pgo_world_t`、`pgo_error_t`。
+- 类型一致性：核心名称统一使用 `RestMesh`、`DofLayout`、`Displacement`、`DirichletBoundary`、`ReducedDofMap`、`MassSpringLocalEnergyModel`、`MassSpringLocalEnergyProvider`、`ReducedEnergyView`、`ObjFrameWriter`、`NewtonSolver`、`pgo_world_t`、`pgo_error_t`。
 - 范围控制：Vulkan、Slang、FEM、contact、IPC、GPU solvers 不进入 Milestone 1，但数据布局和 API 边界保持兼容。

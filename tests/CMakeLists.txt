@@ -1,12 +1,16 @@
 include(GoogleTest)
 
 add_executable(pgo_tests
+    assembly/test_cpu_assembler.cpp
     base/test_assert.cpp
     dof/test_dof.cpp
+    energy/test_energy_concepts.cpp
+    energy/test_mass_spring_local_energy_provider.cpp
     geometry/test_rest_mesh.cpp
     io/test_obj_io.cpp
     math/test_backend.cpp
     math/test_eigen_config.cpp
+    math/test_finite_difference.cpp
     storage/test_storage.cpp
 )
 
