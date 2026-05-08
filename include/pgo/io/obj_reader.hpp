@@ -2,7 +2,7 @@
 
 #include "pgo/base/assert.hpp"
 #include "pgo/geometry/rest_mesh.hpp"
-#include "pgo/math/backend.hpp"
+#include "pgo/math/types.hpp"
 #include "pgo/storage/host_buffer.hpp"
 
 #include <algorithm>
@@ -48,7 +48,7 @@ inline void insert_undirected_edge(std::set<std::pair<pgo::geometry::VertexIndex
 
 } // namespace detail
 
-template <pgo::math::ScalarLike T, int Dim>
+template <typename T, int Dim>
 [[nodiscard]] pgo::geometry::RestMesh<T, Dim> read_obj_rest_mesh(const std::filesystem::path& path) {
     static_assert(Dim > 0);
 

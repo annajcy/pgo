@@ -2,7 +2,7 @@
 
 #include "pgo/base/assert.hpp"
 #include "pgo/energy/energy_concepts.hpp"
-#include "pgo/math/backend.hpp"
+#include "pgo/math/types.hpp"
 
 #include <cstddef>
 #include <vector>
@@ -11,20 +11,20 @@ namespace pgo::assembly {
 
 namespace detail {
 
-template <pgo::math::RealScalar T>
+template <typename T>
 inline void require_dofs_in_range(const std::vector<std::size_t>& dofs, const pgo::math::DVec<T>& full_u) {
     for (const auto dof : dofs) {
         pgo::base::require(dof < static_cast<std::size_t>(full_u.size()), "local DOF index is out of range");
     }
 }
 
-template <pgo::math::RealScalar T>
+template <typename T>
 inline void require_local_gradient_size(const std::vector<std::size_t>& dofs, const LocalVector<T>& local_g) {
     pgo::base::require(dofs.size() == static_cast<std::size_t>(local_g.size()),
                        "local gradient size does not match local DOF count");
 }
 
-template <pgo::math::RealScalar T>
+template <typename T>
 inline void require_local_hessian_size(const std::vector<std::size_t>& dofs, const LocalMatrix<T>& local_H) {
     pgo::base::require(dofs.size() == static_cast<std::size_t>(local_H.rows()) &&
                            dofs.size() == static_cast<std::size_t>(local_H.cols()),
@@ -33,7 +33,7 @@ inline void require_local_hessian_size(const std::vector<std::size_t>& dofs, con
 
 } // namespace detail
 
-template <pgo::math::RealScalar T, class EnergyProvider>
+template <typename T, typename EnergyProvider>
     requires pgo::energy::LocalEnergyProvider<EnergyProvider, T>
 [[nodiscard]] T assemble_value(const EnergyProvider& energy_provider, const pgo::math::DVec<T>& full_u) {
     T value{};
@@ -43,7 +43,7 @@ template <pgo::math::RealScalar T, class EnergyProvider>
     return value;
 }
 
-template <pgo::math::RealScalar T, class EnergyProvider>
+template <typename T, typename EnergyProvider>
     requires pgo::energy::LocalEnergyProvider<EnergyProvider, T>
 void assemble_gradient(const EnergyProvider& energy_provider, const pgo::math::DVec<T>& full_u,
                        pgo::math::DVec<T>& full_gradient) {
@@ -64,7 +64,7 @@ void assemble_gradient(const EnergyProvider& energy_provider, const pgo::math::D
     }
 }
 
-template <pgo::math::RealScalar T, class EnergyProvider>
+template <typename T, typename EnergyProvider>
     requires pgo::energy::LocalEnergyProvider<EnergyProvider, T>
 void assemble_hessian(const EnergyProvider& energy_provider, const pgo::math::DVec<T>& full_u,
                       pgo::math::SparseMat<T>& full_hessian) {
@@ -90,7 +90,7 @@ void assemble_hessian(const EnergyProvider& energy_provider, const pgo::math::DV
     full_hessian.setFromTriplets(triplets.begin(), triplets.end());
 }
 
-template <pgo::math::RealScalar T, class EnergyProvider>
+template <typename T, typename EnergyProvider>
     requires pgo::energy::LocalEnergyProvider<EnergyProvider, T>
 void assemble_value_gradient_hessian(const EnergyProvider& energy_provider, const pgo::math::DVec<T>& full_u, T& value,
                                      pgo::math::DVec<T>& full_gradient, pgo::math::SparseMat<T>& full_hessian) {

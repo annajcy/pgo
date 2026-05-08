@@ -4,10 +4,10 @@
 
 namespace pgo::storage {
 
-template <class T>
+template <typename T>
 using ArrayView = std::span<T>;
 
-template <class T>
+template <typename T>
 using ConstArrayView = std::span<const T>;
 
 } // namespace pgo::storage

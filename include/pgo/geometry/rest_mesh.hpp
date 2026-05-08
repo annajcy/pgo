@@ -2,7 +2,7 @@
 
 #include "pgo/base/assert.hpp"
 #include "pgo/geometry/topology.hpp"
-#include "pgo/math/backend.hpp"
+#include "pgo/math/types.hpp"
 #include "pgo/storage/array_view.hpp"
 #include "pgo/storage/host_buffer.hpp"
 
@@ -11,7 +11,7 @@
 
 namespace pgo::geometry {
 
-template <pgo::math::ScalarLike T, int Dim>
+template <typename T, int Dim>
 class RestMesh {
 public:
     static_assert(Dim > 0);

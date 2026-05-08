@@ -52,7 +52,6 @@ TEST(MassSpringLocalEnergyModel, RestStateIsZeroAndRejectsInvalidData) {
     data.rest_i << 0.0, 0.0;
     data.rest_j << 1.0, 0.0;
     data.stiffness = 10.0;
-    data.min_length = 1e-8;
 
     pgo::assembly::LocalVector<double> local_u{4};
     local_u.setZero();
@@ -71,10 +70,6 @@ TEST(MassSpringLocalEnergyModel, RestStateIsZeroAndRejectsInvalidData) {
     EXPECT_THROW(static_cast<void>(Model::value(data, local_u)), std::runtime_error);
 
     data.stiffness = 10.0;
-    data.min_length = 0.0;
-    EXPECT_THROW(static_cast<void>(Model::value(data, local_u)), std::runtime_error);
-
-    data.min_length = 1e-8;
     pgo::assembly::LocalVector<double> wrong_size_local_u{3};
     wrong_size_local_u.setZero();
     EXPECT_THROW(static_cast<void>(Model::value(data, wrong_size_local_u)), std::runtime_error);
@@ -87,7 +82,6 @@ TEST(MassSpringLocalEnergyModel, LocalDerivativesMatchFiniteDifferencesForStretc
     data.rest_i << 0.0, 0.0;
     data.rest_j << 1.0, 0.0;
     data.stiffness = 7.0;
-    data.min_length = 1e-8;
 
     const std::vector<pgo::math::DVec<double>> cases = [] {
         std::vector<pgo::math::DVec<double>> values;

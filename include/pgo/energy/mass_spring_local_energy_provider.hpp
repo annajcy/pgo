@@ -3,26 +3,25 @@
 #include "pgo/assembly/local_matrix.hpp"
 #include "pgo/base/assert.hpp"
 #include "pgo/geometry/rest_mesh.hpp"
-#include "pgo/math/backend.hpp"
+#include "pgo/math/types.hpp"
 #include "pgo/storage/array_view.hpp"
 #include "pgo/storage/host_buffer.hpp"
 
 #include <cmath>
 #include <cstddef>
-#include <limits>
+#include <type_traits>
 #include <vector>
 
 namespace pgo::energy {
 
-template <pgo::math::RealScalar T, int Dim>
+template <typename T, int Dim>
 struct MassSpringLocalData {
     pgo::math::Vec<T, Dim> rest_i{};
     pgo::math::Vec<T, Dim> rest_j{};
     T stiffness{};
-    T min_length{};
 };
 
-template <pgo::math::RealScalar T, int Dim>
+template <typename T, int Dim>
 class MassSpringLocalEnergyModel {
 public:
     [[nodiscard]] static std::size_t local_dof_count(const MassSpringLocalData<T, Dim>& local_data) {
@@ -32,18 +31,46 @@ public:
 
     [[nodiscard]] static T value(const MassSpringLocalData<T, Dim>& local_data,
                                  const pgo::assembly::LocalVector<T>& local_u) {
-        T local_value{};
-        pgo::assembly::LocalVector<T> local_g;
-        pgo::assembly::LocalMatrix<T> local_H;
-        value_gradient_hessian(local_data, local_u, local_value, local_g, local_H);
-        return local_value;
+        validate_data(local_data);
+        require_local_u_size(local_u);
+
+        const auto rest_d = local_data.rest_i - local_data.rest_j;
+        const auto current_d = current_edge_vector(local_data, local_u);
+        const auto rest_length = rest_d.norm();
+        const auto current_length = current_d.norm();
+        const auto safe_length = current_length > kMinLength ? current_length : kMinLength;
+        const auto stretch = safe_length - rest_length;
+
+        return T{0.5} * local_data.stiffness * stretch * stretch;
     }
 
     static void gradient(const MassSpringLocalData<T, Dim>& local_data, const pgo::assembly::LocalVector<T>& local_u,
                          pgo::assembly::LocalVector<T>& local_g) {
-        T local_value{};
-        pgo::assembly::LocalMatrix<T> local_H;
-        value_gradient_hessian(local_data, local_u, local_value, local_g, local_H);
+        validate_data(local_data);
+        require_local_u_size(local_u);
+
+        const auto rest_d = local_data.rest_i - local_data.rest_j;
+        const auto current_d = current_edge_vector(local_data, local_u);
+        const auto rest_length = rest_d.norm();
+        const auto current_length = current_d.norm();
+        const auto safe_length = current_length > kMinLength ? current_length : kMinLength;
+        const auto stretch = safe_length - rest_length;
+
+        pgo::math::Vec<T, Dim> direction{};
+        if (current_length > kMinLength) {
+            direction = current_d / current_length;
+        } else {
+            direction.setZero();
+        }
+
+        const pgo::math::Vec<T, Dim> grad_d = local_data.stiffness * stretch * direction;
+
+        local_g.resize(pgo::math::dense_index(local_dof_count(local_data)));
+        for (std::size_t component = 0; component < static_cast<std::size_t>(Dim); ++component) {
+            local_g[pgo::math::dense_index(component)] = grad_d[pgo::math::dense_index(component)];
+            local_g[pgo::math::dense_index(static_cast<std::size_t>(Dim) + component)] =
+                -grad_d[pgo::math::dense_index(component)];
+        }
     }
 
     static void hessian(const MassSpringLocalData<T, Dim>& local_data, const pgo::assembly::LocalVector<T>& local_u,
@@ -63,13 +90,13 @@ public:
         const auto current_d = current_edge_vector(local_data, local_u);
         const auto rest_length = rest_d.norm();
         const auto current_length = current_d.norm();
-        const auto safe_length = current_length > local_data.min_length ? current_length : local_data.min_length;
+        const auto safe_length = current_length > kMinLength ? current_length : kMinLength;
         const auto stretch = safe_length - rest_length;
 
         value = T{0.5} * local_data.stiffness * stretch * stretch;
 
         pgo::math::Vec<T, Dim> direction{};
-        if (current_length > local_data.min_length) {
+        if (current_length > kMinLength) {
             direction = current_d / current_length;
         } else {
             direction.setZero();
@@ -78,7 +105,7 @@ public:
         const pgo::math::Vec<T, Dim> grad_d = local_data.stiffness * stretch * direction;
 
         pgo::math::Mat<T, Dim, Dim> H_d{};
-        if (current_length > local_data.min_length) {
+        if (current_length > kMinLength) {
             const pgo::math::Mat<T, Dim, Dim> nnT = direction * direction.transpose();
             const pgo::math::Mat<T, Dim, Dim> I = pgo::math::Mat<T, Dim, Dim>::Identity();
             H_d = local_data.stiffness * (nnT + (T{1} - rest_length / current_length) * (I - nnT));
@@ -112,11 +139,14 @@ public:
     }
 
 private:
+    // Numerical safety threshold to prevent division by zero when current edge length collapses.
+    // sqrt(epsilon) gives ~1.49e-8 for double, ~3.45e-4 for float.
+    static constexpr T kMinLength = std::is_same_v<T, float> ? T{3.4526698e-4} : T{1.4901161193847656e-8};
+
     static void validate_data(const MassSpringLocalData<T, Dim>& local_data) {
         static_assert(Dim > 0);
         pgo::base::require(local_data.stiffness >= T{0}, "mass-spring stiffness must be non-negative");
-        pgo::base::require(local_data.min_length > T{0}, "mass-spring minimum length must be positive");
-        pgo::base::require((local_data.rest_i - local_data.rest_j).norm() > local_data.min_length,
+        pgo::base::require((local_data.rest_i - local_data.rest_j).norm() > kMinLength,
                            "mass-spring rest edge length is too small");
     }
 
@@ -139,26 +169,23 @@ private:
     }
 };
 
-template <pgo::math::RealScalar T, int Dim>
+template <typename T, int Dim>
 class MassSpringLocalEnergyProvider {
     using Model = MassSpringLocalEnergyModel<T, Dim>;
 
     const pgo::geometry::RestMesh<T, Dim>* m_mesh;
     pgo::storage::HostBuffer<T> m_stiffnesses;
-    T m_min_length;
 
 public:
-    explicit MassSpringLocalEnergyProvider(const pgo::geometry::RestMesh<T, Dim>& mesh, const T stiffness,
-                                           const T min_length = std::sqrt(std::numeric_limits<T>::epsilon()))
-        : m_mesh{&mesh}, m_stiffnesses(mesh.num_edges(), stiffness), m_min_length{min_length} {
+    explicit MassSpringLocalEnergyProvider(const pgo::geometry::RestMesh<T, Dim>& mesh, const T stiffness)
+        : m_mesh{&mesh}, m_stiffnesses(mesh.num_edges(), stiffness) {
         pgo::base::require(stiffness >= T{0}, "mass-spring stiffness must be non-negative");
         validate_all_edges();
     }
 
     explicit MassSpringLocalEnergyProvider(const pgo::geometry::RestMesh<T, Dim>& mesh,
-                                           const pgo::storage::ConstArrayView<T> stiffnesses,
-                                           const T min_length = std::sqrt(std::numeric_limits<T>::epsilon()))
-        : m_mesh{&mesh}, m_stiffnesses(stiffnesses.begin(), stiffnesses.end()), m_min_length{min_length} {
+                                           const pgo::storage::ConstArrayView<T> stiffnesses)
+        : m_mesh{&mesh}, m_stiffnesses(stiffnesses.begin(), stiffnesses.end()) {
         pgo::base::require(stiffnesses.size() == mesh.num_edges(), "mass-spring stiffness count must match edge count");
         validate_all_edges();
     }
@@ -216,7 +243,6 @@ private:
 
     void validate_all_edges() const {
         static_assert(Dim > 0);
-        pgo::base::require(m_min_length > T{0}, "mass-spring minimum length must be positive");
         for (std::size_t edge_id = 0; edge_id < m_mesh->num_edges(); ++edge_id) {
             static_cast<void>(Model::local_dof_count(local_data(edge_id)));
         }
@@ -230,7 +256,6 @@ private:
             .rest_i = m_mesh->rest_position(vertex_i),
             .rest_j = m_mesh->rest_position(vertex_j),
             .stiffness = m_stiffnesses[edge_id],
-            .min_length = m_min_length,
         };
     }
 

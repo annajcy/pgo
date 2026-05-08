@@ -1,11 +1,11 @@
 #pragma once
 
 #include "pgo/base/assert.hpp"
-#include "pgo/math/backend.hpp"
+#include "pgo/math/types.hpp"
 
 namespace pgo::math {
 
-template <RealScalar T, class F>
+template <typename T, typename F>
 [[nodiscard]] DVec<T> finite_difference_gradient(F&& value_function, const DVec<T>& x, const T eps) {
     pgo::base::require(eps > T{0}, "finite difference epsilon must be positive");
 
@@ -23,7 +23,7 @@ template <RealScalar T, class F>
     return gradient;
 }
 
-template <RealScalar T, class Grad>
+template <typename T, typename Grad>
 [[nodiscard]] DMat<T> finite_difference_hessian_from_gradient(Grad&& gradient_function, const DVec<T>& x, const T eps) {
     pgo::base::require(eps > T{0}, "finite difference epsilon must be positive");
 

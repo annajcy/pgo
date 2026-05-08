@@ -1,26 +1,22 @@
-#include "pgo/math/backend.hpp"
+#include "pgo/math/types.hpp"
 
 #include <gtest/gtest.h>
 #include <type_traits>
 
 namespace pgo::math::test {
 
-static_assert(pgo::math::MathBackend<pgo::math::DefaultBackend>);
-static_assert(pgo::math::ScalarLike<double>);
-static_assert(pgo::math::RealScalar<double>);
-
-TEST(MathBackend, FixedVectorHasExpectedSize) {
+TEST(MathTypes, FixedVectorHasExpectedSize) {
     pgo::math::Vec<double, 3> vector{};
     EXPECT_EQ(3, vector.size());
 }
 
-TEST(MathBackend, DynamicVectorCanResize) {
+TEST(MathTypes, DynamicVectorCanResize) {
     pgo::math::DVec<double> vector{};
     vector.resize(4);
     EXPECT_EQ(4, vector.size());
 }
 
-TEST(MathBackend, SparseMatrixUsesRowMajorStorage) {
+TEST(MathTypes, SparseMatrixUsesRowMajorStorage) {
     using SparseMatrix = pgo::math::SparseMat<double>;
     EXPECT_TRUE((std::is_same_v<SparseMatrix, Eigen::SparseMatrix<double, Eigen::RowMajor>>));
 }

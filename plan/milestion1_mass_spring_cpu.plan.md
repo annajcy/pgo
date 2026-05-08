@@ -1804,7 +1804,6 @@ struct MassSpringLocalData {
     pgo::math::Vec<T, Dim> rest_i;
     pgo::math::Vec<T, Dim> rest_j;
     T stiffness;
-    T min_length;
 };
 
 template <pgo::math::RealScalar T, int Dim>
@@ -1828,8 +1827,10 @@ public:
 
 - `local_u` 的 order 固定为 `[u_i components..., u_j components...]`。
 - `local_dof_count(data) == 2 * Dim`。
-- `data.stiffness < 0`、`data.min_length <= 0`、rest length `<= data.min_length` 时抛出 `std::runtime_error`。
+- `data.stiffness < 0`、rest length `<= kMinLength` 时抛出 `std::runtime_error`。
 - `local_hessian` 返回 true analytic Hessian，不做 PSD projection。
+- `value` 和 `gradient` 拥有独立的实现，以避免不必要的开销，而不是直接 fallback 到 `value_gradient_hessian`。
+- 退化情况 (degenerate edge) 使用内部的 `static constexpr T kMinLength` 进行数值防护。
 
 - [ ] **Step 2: 实现 `MassSpringLocalEnergyProvider<T, Dim>`**
 
@@ -1839,11 +1840,9 @@ Provider 是 mesh/full-u/material gather 层：
 template <pgo::math::RealScalar T, int Dim>
 class MassSpringLocalEnergyProvider {
 public:
-    MassSpringLocalEnergyProvider(const pgo::geometry::RestMesh<T, Dim>& mesh, T uniform_stiffness,
-                                  T min_length = std::sqrt(std::numeric_limits<T>::epsilon()));
+    MassSpringLocalEnergyProvider(const pgo::geometry::RestMesh<T, Dim>& mesh, T uniform_stiffness);
     MassSpringLocalEnergyProvider(const pgo::geometry::RestMesh<T, Dim>& mesh,
-                                  pgo::storage::ConstArrayView<T> stiffnesses,
-                                  T min_length = std::sqrt(std::numeric_limits<T>::epsilon()));
+                                  pgo::storage::ConstArrayView<T> stiffnesses);
 
     [[nodiscard]] std::size_t local_count() const;
     [[nodiscard]] std::size_t max_local_dofs() const;
@@ -1878,7 +1877,7 @@ Provider 实现要求：
 ```
 
 其中 full DOF index 使用 `vertex * Dim + component`，和 `DofLayout<Dim>` 一致。
-- 构造时遍历所有 edges，计算 rest length `L`。如果 `L <= min_length_`，抛出 `std::runtime_error`，不要让零长度 rest spring 进入 solver。
+- 构造时遍历所有 edges，计算 rest length `L`。如果 `L <= kMinLength`，抛出 `std::runtime_error`，不要让零长度 rest spring 进入 solver。
 - provider 的 `local_value`、`local_gradient`、`local_hessian` 使用 full displacement `u` gather local displacement，然后调用 `MassSpringLocalEnergyModel` static API。
 
 - [ ] **Step 3: 明确 mass-spring 解析导数公式**
@@ -1892,7 +1891,7 @@ L = ||X_i - X_j||
 n = d / r
 ```
 
-当 `r > min_length_` 时，对 `d` 的导数为：
+当 `r > kMinLength` 时，对 `d` 的导数为：
 
 ```text
 grad_d = k * (r - L) * n
@@ -1908,7 +1907,7 @@ local_H = [  H_d, -H_d
             -H_d,  H_d ]
 ```
 
-当 `r <= min_length_` 时，能量仍按 clamped `r_safe = min_length_` 做数值防护，gradient/Hessian 使用稳定 fallback，保证不产生 NaN。这个分支只用于避免 solver 崩溃；finite difference derivative tests 应选择远离 `r = 0` 的构型。
+当 `r <= kMinLength` 时，能量仍按 clamped `r_safe = kMinLength` 做数值防护，gradient/Hessian 使用稳定 fallback，保证不产生 NaN。这个分支只用于避免 solver 崩溃；finite difference derivative tests 应选择远离 `r = 0` 的构型。
 
 - [ ] **Step 4: 添加 local model/provider smoke tests**
 

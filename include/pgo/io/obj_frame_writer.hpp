@@ -2,7 +2,7 @@
 
 #include "pgo/base/assert.hpp"
 #include "pgo/geometry/rest_mesh.hpp"
-#include "pgo/math/backend.hpp"
+#include "pgo/math/types.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -13,7 +13,7 @@
 
 namespace pgo::io {
 
-template <pgo::math::ScalarLike T, int Dim>
+template <typename T, int Dim>
 class ObjFrameWriter {
 public:
     explicit ObjFrameWriter(std::filesystem::path output_dir) : m_output_dir{std::move(output_dir)} {

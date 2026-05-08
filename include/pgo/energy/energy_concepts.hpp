@@ -1,7 +1,7 @@
 #pragma once
 
 #include "pgo/assembly/local_matrix.hpp"
-#include "pgo/math/backend.hpp"
+#include "pgo/math/types.hpp"
 
 #include <concepts>
 #include <cstddef>
@@ -9,9 +9,9 @@
 
 namespace pgo::energy {
 
-template <class Energy, class T>
+template <typename Energy, typename T>
 concept FullEnergy =
-    pgo::math::RealScalar<T> && requires(const Energy& energy, const pgo::math::DVec<T>& u, T& value,
+    requires(const Energy& energy, const pgo::math::DVec<T>& u, T& value,
                                          pgo::math::DVec<T>& gradient, pgo::math::SparseMat<T>& hessian) {
         { energy.value(u) } -> std::same_as<T>;
         energy.gradient(u, gradient);
@@ -19,8 +19,8 @@ concept FullEnergy =
         energy.value_gradient_hessian(u, value, gradient, hessian);
     };
 
-template <class Model, class T, class LocalData>
-concept LocalEnergyModel = pgo::math::RealScalar<T> &&
+template <typename Model, typename T, typename LocalData>
+concept LocalEnergyModel =
                            requires(const LocalData& local_data, const pgo::assembly::LocalVector<T>& local_u,
                                     pgo::assembly::LocalVector<T>& local_g, pgo::assembly::LocalMatrix<T>& local_H) {
                                { Model::local_dof_count(local_data) } -> std::convertible_to<std::size_t>;
@@ -29,7 +29,7 @@ concept LocalEnergyModel = pgo::math::RealScalar<T> &&
                                Model::hessian(local_data, local_u, local_H);
                            };
 
-template <class Model, class T, class LocalData>
+template <typename Model, typename T, typename LocalData>
 concept FusedLocalEnergyModel =
     LocalEnergyModel<Model, T, LocalData> &&
     requires(const LocalData& local_data, const pgo::assembly::LocalVector<T>& local_u, T& value,
@@ -37,8 +37,8 @@ concept FusedLocalEnergyModel =
         Model::value_gradient_hessian(local_data, local_u, value, local_g, local_H);
     };
 
-template <class EnergyProvider, class T>
-concept LocalEnergyProvider = pgo::math::RealScalar<T> &&
+template <typename EnergyProvider, typename T>
+concept LocalEnergyProvider =
                               requires(const EnergyProvider& energy_provider, std::size_t local_id,
                                        const pgo::math::DVec<T>& full_u, std::vector<std::size_t>& dofs,
                                        pgo::assembly::LocalVector<T>& local_g, pgo::assembly::LocalMatrix<T>& local_H) {
@@ -49,7 +49,7 @@ concept LocalEnergyProvider = pgo::math::RealScalar<T> &&
                                   energy_provider.local_hessian(local_id, full_u, local_H);
                               };
 
-template <class EnergyProvider, class T>
+template <typename EnergyProvider, typename T>
 concept FusedLocalEnergyProvider =
     LocalEnergyProvider<EnergyProvider, T> &&
     requires(const EnergyProvider& energy_provider, std::size_t local_id, const pgo::math::DVec<T>& full_u, T& value,

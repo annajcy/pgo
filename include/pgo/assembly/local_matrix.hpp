@@ -1,13 +1,13 @@
 #pragma once
 
-#include "pgo/math/backend.hpp"
+#include "pgo/math/types.hpp"
 
 namespace pgo::assembly {
 
-template <pgo::math::RealScalar T>
+template <typename T>
 using LocalVector = pgo::math::DVec<T>;
 
-template <pgo::math::RealScalar T>
+template <typename T>
 using LocalMatrix = pgo::math::DMat<T>;
 
 } // namespace pgo::assembly

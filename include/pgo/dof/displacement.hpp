@@ -2,13 +2,13 @@
 
 #include "pgo/base/assert.hpp"
 #include "pgo/dof/dof_layout.hpp"
-#include "pgo/math/backend.hpp"
+#include "pgo/math/types.hpp"
 
 #include <cstddef>
 
 namespace pgo::dof {
 
-template <pgo::math::ScalarLike T, int Dim>
+template <typename T, int Dim>
 class Displacement {
     DofLayout<Dim> m_layout;
     pgo::math::DVec<T> m_vector;

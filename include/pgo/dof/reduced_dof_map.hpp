@@ -2,7 +2,7 @@
 
 #include "pgo/base/assert.hpp"
 #include "pgo/dof/dirichlet_boundary.hpp"
-#include "pgo/math/backend.hpp"
+#include "pgo/math/types.hpp"
 #include "pgo/storage/array_view.hpp"
 
 #include <cstddef>
@@ -12,7 +12,7 @@
 
 namespace pgo::dof {
 
-template <pgo::math::RealScalar T>
+template <typename T>
 class ReducedDofMap {
     std::vector<std::size_t> m_free_to_full;
     std::vector<std::size_t> m_full_to_free;

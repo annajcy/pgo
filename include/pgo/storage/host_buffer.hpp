@@ -4,7 +4,7 @@
 
 namespace pgo::storage {
 
-template <class T>
+template <typename T>
 using HostBuffer = std::vector<T>;
 
 } // namespace pgo::storage
