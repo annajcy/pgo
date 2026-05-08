@@ -6,7 +6,7 @@
 
 **架构:** 内部核心是现代 C++23 template/header-only library；对外二进制接口是 compiled C99 ABI dynamic library。CPU 实现优先，但数据布局和 energy interface 从第一天就为 Milestone 2 的 Vulkan/Slang GPU backend 留好边界：flat storage、显式 `X + u`、local contribution API、独立 assembly 层、geometry/storage 不持有 Eigen object。
 
-**技术栈:** C++23、C99 ABI、CMake Presets、Conan 2、Eigen、GoogleTest、CLI11、clang-format、GitHub Actions、Python Alembic binding（可选，用于 OBJ frames 后处理）。
+**技术栈:** C++23、C99 ABI、CMake Presets、Conan 2、Eigen、GoogleTest、CLI11、Alembic、clang-format、GitHub Actions。
 
 ---
 
@@ -25,7 +25,7 @@
 - C++ template、STL、Eigen、异常、allocator 内部细节不能越过 C ABI 边界。
 - C API 只暴露 `extern "C"`、opaque handles、POD descriptors、pointer/count arrays、status code、explicit destroy/copy functions。
 - C bridge 的 `.cpp` 内部可以使用现代 C++、STL、RAII、Eigen，但所有 exported C function 必须 catch exceptions 并转换为 `pgo_status_t` + `pgo_error_t`。
-- Alembic 不进入 C++ core。`.abc` 由 Python tool 消费 OBJ frames 后生成。
+- Alembic 不进入 C++ core。`.abc` 由独立 C++ tool 消费 OBJ frames 后生成，并通过 Conan 管理 Alembic/Imath 依赖。
 - Vulkan、Slang、GPU reductions、GPU linear solver、contact、IPC、FEM、time integrator 不属于 Milestone 1。
 
 ## 1. 目标目录结构
@@ -118,7 +118,8 @@
     solver/
       test_solver.cpp
   tools/
-    obj_frames_to_abc.py
+    CMakeLists.txt
+    obj_frames_to_abc.cpp
   .github/
     workflows/
       ci.yml
@@ -1295,7 +1296,7 @@ ctest --preset debug -R dof
 - 创建: `include/pgo/io/obj_reader.hpp`
 - 修改: `tests/io/test_obj_io.cpp`
 
-- [ ] **Step 1: 实现 `read_obj_rest_mesh<T, Dim>(path)`**
+- [x] **Step 1: 实现 `read_obj_rest_mesh<T, Dim>(path)`**
 
 支持：
 
@@ -1313,7 +1314,7 @@ ctest --preset debug -R dof
 - 读取为 `RestMesh<T, Dim>`。
 - `Dim == 2` 时丢弃 OBJ z 坐标。
 
-- [ ] **Step 2: 添加测试**
+- [x] **Step 2: 添加测试**
 
 创建临时 OBJ：4 个 vertices、2 个 triangles。读取后断言：
 
@@ -1323,7 +1324,7 @@ ctest --preset debug -R dof
 - `face_indices().size() == 6`
 - `edge_indices().size() == 10`
 
-- [ ] **Step 3: 运行测试**
+- [x] **Step 3: 运行测试**
 
 ```bash
 cmake --build --preset debug
@@ -1336,7 +1337,7 @@ ctest --preset debug -R obj
 - 创建: `include/pgo/io/obj_frame_writer.hpp`
 - 修改: `tests/io/test_obj_io.cpp`
 
-- [ ] **Step 1: 实现 `ObjFrameWriter<T, Dim>`**
+- [x] **Step 1: 实现 `ObjFrameWriter<T, Dim>`**
 
 职责：
 
@@ -1346,11 +1347,11 @@ ctest --preset debug -R obj
 - 通过 `face_indices` 保留原 faces。
 - 如果 mesh 没有 faces，则通过 `edge_indices` 写 `l` records。
 
-- [ ] **Step 2: 添加 writer 测试**
+- [x] **Step 2: 添加 writer 测试**
 
 创建两点 line mesh，设置第二个点的 displacement，写出 frame 后检查 OBJ 文本包含 displaced vertex。
 
-- [ ] **Step 3: 运行测试**
+- [x] **Step 3: 运行测试**
 
 ```bash
 cmake --build --preset debug
@@ -1683,29 +1684,35 @@ cmake --build --preset debug --target pgo_mass_spring_cloth
 期望：生成 `frames/frame_0000.obj` 到 `frames/frame_0004.obj`。
 
 
-### Task 5.3: 添加 OBJ frames -> Alembic Python tool
+### Task 5.3: 添加 OBJ frames -> Alembic C++ tool
 
 **文件:**
-- 创建: `tools/obj_frames_to_abc.py`
+- 创建: `tools/CMakeLists.txt`
+- 创建: `tools/obj_frames_to_abc.cpp`
+- 修改: `conanfile.py`
+- 修改: `cmake/pgo_options.cmake`
+- 修改: `cmake/pgo_dependencies.cmake`
+- 修改: `CMakeLists.txt`
 
-- [ ] **Step 1: 实现工具**
+- [x] **Step 1: 实现工具**
 
 行为：
 
 - 接收 `--frames-dir`、`--output`、`--fps`。
 - 按字典序读取 `frame_*.obj`。
 - 要求所有 frame topology 一致。
-- 在 `main()` 内部 import Alembic Python binding。
-- Alembic import 失败时打印明确安装提示并返回 exit code `2`。
+- 通过 Conan 依赖 `alembic/1.8.8`，Imath 由 Alembic 传递引入。
+- 构建 target: `pgo_obj_frames_to_abc`。
 - 成功时写出 animated polymesh `.abc`。
 
-- [ ] **Step 2: 测试 Alembic 缺失路径**
+- [x] **Step 2: 构建和运行验证**
 
 ```bash
-python tools/obj_frames_to_abc.py --frames-dir frames --output cloth.abc
+cmake --build --preset debug --target pgo_obj_frames_to_abc
+./build/debug/tools/pgo_obj_frames_to_abc --frames-dir output/example/obj_io --output output/example/bunny.abc --fps 24
 ```
 
-没有 Alembic binding 时，期望返回 code `2` 并打印清晰提示。
+期望：写出 `output/example/bunny.abc`，并打印 frame、vertex、face、fps、output summary。
 
 
 ## Phase 6: C99 ABI 动态库桥接层

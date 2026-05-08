@@ -12,4 +12,5 @@ CMakeUserPresets.json
 *.pyc
 __pycache__/
 frames/
+output/
 *.abc

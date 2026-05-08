@@ -48,23 +48,11 @@ jobs:
       - name: Install Conan
         run: uv tool install conan
 
-      - name: Install dependencies
-        env:
-          CC: ${{ matrix.cc }}
-          CXX: ${{ matrix.cxx }}
-        run: >
-          conan install .
-          --profile:host=${{ matrix.profile }}
-          --profile:build=${{ matrix.profile }}
-          --output-folder=build/conan/debug
-          --build=missing
-          -s:h build_type=Debug
-
       - name: Configure
         env:
           CC: ${{ matrix.cc }}
           CXX: ${{ matrix.cxx }}
-        run: cmake --preset debug
+        run: uv run python scripts/pgo_configure.py debug --profile ${{ matrix.profile }}
 
       - name: Build
         run: cmake --build --preset debug
@@ -91,23 +79,11 @@ jobs:
       - name: Install Conan
         run: uv tool install conan
 
-      - name: Install dependencies
-        env:
-          CC: gcc-13
-          CXX: g++-13
-        run: >
-          conan install .
-          --profile:host=conan/profiles/ubuntu-x86_64-gcc
-          --profile:build=conan/profiles/ubuntu-x86_64-gcc
-          --output-folder=build/conan/debug
-          --build=missing
-          -s:h build_type=Debug
-
       - name: Configure
         env:
           CC: gcc-13
           CXX: g++-13
-        run: cmake --preset asan
+        run: uv run python scripts/pgo_configure.py asan --profile conan/profiles/ubuntu-x86_64-gcc
 
       - name: Build
         run: cmake --build --preset asan
@@ -171,23 +147,11 @@ jobs:
         shell: pwsh
         run: .\scripts\install-onemkl\install-onemkl-windows.ps1
 
-      - name: Install acceleration dependencies
-        env:
-          CC: ${{ matrix.cc }}
-          CXX: ${{ matrix.cxx }}
-        run: >
-          conan install .
-          --profile:host=${{ matrix.profile }}
-          --profile:build=${{ matrix.profile }}
-          --output-folder=build/conan/debug-acceleration
-          --build=missing
-          -s:h build_type=Debug
-
       - name: Configure
         env:
           CC: ${{ matrix.cc }}
           CXX: ${{ matrix.cxx }}
-        run: cmake --preset debug-acceleration
+        run: uv run python scripts/pgo_configure.py debug-acceleration --profile ${{ matrix.profile }}
 
       - name: Build
         run: cmake --build --preset debug-acceleration
@@ -206,7 +170,6 @@ jobs:
           - os: ubuntu-latest
             profile: conan/profiles/ubuntu-x86_64-gcc
             preset: release
-            conan_output: build/conan/release
             needs_mkl: false
             cc: gcc-13
             cxx: g++-13
@@ -214,7 +177,6 @@ jobs:
           - os: macos-latest
             profile: conan/profiles/macos-arm64-apple-clang
             preset: release
-            conan_output: build/conan/release
             needs_mkl: false
             cc: cc
             cxx: c++
@@ -222,7 +184,6 @@ jobs:
           - os: windows-latest
             profile: conan/profiles/windows-x86_64-msvc
             preset: release
-            conan_output: build/conan/release
             needs_mkl: false
             cc: cl
             cxx: cl
@@ -230,7 +191,6 @@ jobs:
           - os: macos-latest
             profile: conan/profiles/macos-arm64-apple-clang
             preset: release-acceleration
-            conan_output: build/conan/release-acceleration
             needs_mkl: false
             cc: cc
             cxx: c++
@@ -238,7 +198,6 @@ jobs:
           - os: ubuntu-latest
             profile: conan/profiles/ubuntu-x86_64-gcc
             preset: release-acceleration
-            conan_output: build/conan/release-acceleration
             needs_mkl: true
             cc: gcc-13
             cxx: g++-13
@@ -246,7 +205,6 @@ jobs:
           - os: windows-latest
             profile: conan/profiles/windows-x86_64-msvc
             preset: release-acceleration
-            conan_output: build/conan/release-acceleration
             needs_mkl: true
             cc: cl
             cxx: cl
@@ -281,23 +239,11 @@ jobs:
         shell: pwsh
         run: .\scripts\install-onemkl\install-onemkl-windows.ps1
 
-      - name: Install benchmark dependencies
-        env:
-          CC: ${{ matrix.cc }}
-          CXX: ${{ matrix.cxx }}
-        run: >
-          conan install .
-          --profile:host=${{ matrix.profile }}
-          --profile:build=${{ matrix.profile }}
-          --output-folder=${{ matrix.conan_output }}
-          --build=missing
-          -s:h build_type=Release
-
       - name: Configure
         env:
           CC: ${{ matrix.cc }}
           CXX: ${{ matrix.cxx }}
-        run: cmake --preset ${{ matrix.preset }}
+        run: uv run python scripts/pgo_configure.py ${{ matrix.preset }} --profile ${{ matrix.profile }}
 
       - name: Build benchmark
         run: cmake --build --preset ${{ matrix.preset }} --target pgo_benchmarks

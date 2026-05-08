@@ -34,37 +34,36 @@ It selects one of:
 You can also pass a platform profile explicitly with
 `--profile:host=... --profile:build=...`.
 
-## Build: Debug
+## Configure Wrapper
 
-Install dependencies into the debug toolchain folder:
+Use the repository wrapper to install Conan dependencies for a CMake preset and
+then run `cmake --preset`:
 
 ```bash
-conan install . \
-  --profile:host=conan/profiles/default \
-  --profile:build=conan/profiles/default \
-  --output-folder=build/conan/debug \
-  --build=missing \
-  -s:h build_type=Debug
+uv run python scripts/pgo_configure.py debug
 ```
 
-Configure and build:
+The wrapper reads `CMakePresets.json`, derives the matching Conan output folder
+from `CMAKE_TOOLCHAIN_FILE`, and uses `conan/profiles/default` unless a profile
+override is provided:
 
 ```bash
-cmake --preset debug
+uv run python scripts/pgo_configure.py debug-acceleration --profile conan/profiles/macos-arm64-apple-clang
+uv run python scripts/pgo_configure.py release --host-profile conan/profiles/default --build-profile conan/profiles/default
+uv run python scripts/pgo_configure.py debug --dry-run
+```
+
+## Build: Debug
+
+```bash
+uv run python scripts/pgo_configure.py debug
 cmake --build --preset debug
 ```
 
 ## Build: Release
 
 ```bash
-conan install . \
-  --profile:host=conan/profiles/default \
-  --profile:build=conan/profiles/default \
-  --output-folder=build/conan/release \
-  --build=missing \
-  -s:h build_type=Release
-
-cmake --preset release
+uv run python scripts/pgo_configure.py release
 cmake --build --preset release
 ```
 
@@ -73,14 +72,7 @@ cmake --build --preset release
 ASan/UBSan uses the debug Conan toolchain and enables `PGO_ENABLE_SANITIZERS`.
 
 ```bash
-conan install . \
-  --profile:host=conan/profiles/default \
-  --profile:build=conan/profiles/default \
-  --output-folder=build/conan/debug \
-  --build=missing \
-  -s:h build_type=Debug
-
-cmake --preset asan
+uv run python scripts/pgo_configure.py asan
 cmake --build --preset asan
 ```
 
@@ -95,21 +87,14 @@ It does not select the sparse linear solver used by Newton iterations.
 The default presets keep acceleration off:
 
 ```bash
-cmake --preset debug
+uv run python scripts/pgo_configure.py debug
 ```
 
 Acceleration presets use `PGO_EIGEN_ACCELERATION_BACKEND=AUTO`. On Apple
 platforms, `AUTO` selects the system Accelerate framework:
 
 ```bash
-conan install . \
-  --profile:host=conan/profiles/macos-arm64-apple-clang \
-  --profile:build=conan/profiles/macos-arm64-apple-clang \
-  --output-folder=build/conan/debug-acceleration \
-  --build=missing \
-  -s:h build_type=Debug
-
-cmake --preset debug-acceleration
+uv run python scripts/pgo_configure.py debug-acceleration --profile conan/profiles/macos-arm64-apple-clang
 cmake --build --preset debug-acceleration
 ctest --preset debug-acceleration -R EigenConfig
 ```
@@ -121,14 +106,7 @@ configuration checks the standard oneMKL install locations directly.
 ```bash
 scripts/install-onemkl/install-onemkl-linux.sh
 
-conan install . \
-  --profile:host=conan/profiles/ubuntu-x86_64-gcc \
-  --profile:build=conan/profiles/ubuntu-x86_64-gcc \
-  --output-folder=build/conan/debug-acceleration \
-  --build=missing \
-  -s:h build_type=Debug
-
-cmake --preset debug-acceleration
+uv run python scripts/pgo_configure.py debug-acceleration --profile conan/profiles/ubuntu-x86_64-gcc
 cmake --build --preset debug-acceleration
 ctest --preset debug-acceleration -R EigenConfig
 ```
@@ -178,14 +156,7 @@ dedicated performance lab results.
 Build and run the baseline Eigen path:
 
 ```bash
-conan install . \
-  --profile:host=conan/profiles/default \
-  --profile:build=conan/profiles/default \
-  --output-folder=build/conan/release \
-  --build=missing \
-  -s:h build_type=Release
-
-cmake --preset release
+uv run python scripts/pgo_configure.py release
 cmake --build --preset release --target pgo_benchmarks
 ./build/release/benchmarks/pgo_benchmarks
 ```
@@ -193,14 +164,7 @@ cmake --build --preset release --target pgo_benchmarks
 Build and run the acceleration path:
 
 ```bash
-conan install . \
-  --profile:host=conan/profiles/macos-arm64-apple-clang \
-  --profile:build=conan/profiles/macos-arm64-apple-clang \
-  --output-folder=build/conan/release-acceleration \
-  --build=missing \
-  -s:h build_type=Release
-
-cmake --preset release-acceleration
+uv run python scripts/pgo_configure.py release-acceleration --profile conan/profiles/macos-arm64-apple-clang
 cmake --build --preset release-acceleration --target pgo_benchmarks
 ./build/release-acceleration/benchmarks/pgo_benchmarks
 ```

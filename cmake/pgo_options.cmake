@@ -1,5 +1,6 @@
 option(PGO_BUILD_TESTS "Build pgo tests" ON)
 option(PGO_BUILD_EXAMPLES "Build pgo examples" ON)
+option(PGO_BUILD_TOOLS "Build pgo command-line tools" ON)
 option(PGO_BUILD_BENCHMARKS "Build pgo benchmarks" ON)
 option(PGO_BUILD_C_API "Build C99 shared-library API" ON)
 option(PGO_ENABLE_SANITIZERS "Enable address and undefined behavior sanitizers" OFF)
