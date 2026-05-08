@@ -868,129 +868,55 @@ Milestone 1 默认仍使用 Eigen `SimplicialLDLT`，直到 solver policy 文件
 如果当前已有根目录平铺的 base assert 测试文件，将它整理到 `tests/base/test_assert.cpp`，并使用 `namespace pgo::base::test`。
 
 
-### Task 1.2: 添加 math backend contracts 和 Eigen backend
+### Task 1.2: 添加基本数学类型 (Eigen Aliases)
 
 **文件:**
-- 创建: `include/pgo/math/scalar.hpp`
-- 创建: `include/pgo/math/eigen_backend.hpp`
-- 创建: `include/pgo/math/backend.hpp`
+- 创建: `include/pgo/math/types.hpp`
 - 创建: `tests/math/test_backend.cpp`
 - 修改: `tests/CMakeLists.txt`
 
-- [x] **Step 1: 定义 scalar concepts**
+- [x] **Step 1: 定义扁平化数学类型**
 
-`scalar.hpp` 提供：
-
-```cpp
-namespace pgo::math {
-template <class T>
-concept ScalarLike = requires(T a, T b) {
-    T{0};
-    T{1};
-    a + b;
-    a - b;
-    a * b;
-    a / b;
-    -a;
-};
-
-template <class T>
-concept RealScalar = std::floating_point<T>;
-} // namespace pgo::math
-```
-
-设计约束：
-
-- `ScalarLike` 用于 local formula、小型向量/矩阵和 energy 表达式，允许 `double`、`float`、Eigen `AutoDiffScalar`，以及未来 Slang/Vulkan 侧的 dual/jet scalar 复刻同一数学形状。
-- `RealScalar` 用于 global sparse assembly、linear solve、line search 这类 Milestone 1 中只支持 real floating-point 的算法。
-- 如果某个 `ScalarLike` 类型需要 Eigen 支持，后续可以为它补 `Eigen::NumTraits<T>` specialization。Milestone 1 只要求 `double` 跑通。
-
-- [x] **Step 2: 定义 `EigenBackend`**
-
-`eigen_backend.hpp` 是 Milestone 1 唯一 math backend implementation：
-
-```cpp
-namespace pgo::math::eigen {
-
-struct EigenBackend {
-    template <pgo::math::ScalarLike T, int Dim>
-    using Vec = Eigen::Matrix<T, Dim, 1>;
-
-    template <pgo::math::ScalarLike T, int Rows, int Cols>
-    using Mat = Eigen::Matrix<T, Rows, Cols>;
-
-    template <pgo::math::ScalarLike T>
-    using DVec = Eigen::Matrix<T, Eigen::Dynamic, 1>;
-
-    template <pgo::math::ScalarLike T>
-    using DMat = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>;
-
-    template <pgo::math::RealScalar T>
-    using SparseMat = Eigen::SparseMatrix<T, Eigen::RowMajor>;
-
-    template <pgo::math::RealScalar T>
-    using Triplet = Eigen::Triplet<T>;
-};
-
-} // namespace pgo::math::eigen
-```
-
-设计约束：
-
-- Eigen 是明确 backend，不是 `pgo::math` 本身。
-- `SparseMat<T>` 和 `Triplet<T>` 暂时只接受 `RealScalar`。不要把 autodiff scalar 放进全局 sparse matrix/factorization；AD 应优先用于 local derivative experiment 或未来 GPU-side local formula。
-- 这是 backend-aware alias layer，不是 runtime polymorphism，也不是完整 backend-agnostic 大抽象。
-
-- [x] **Step 3: 定义 backend contract 和默认 aliases**
-
-`backend.hpp` 提供 `MathBackend` concept、`DefaultBackend` 和默认 aliases：
+`types.hpp` 提供对 Eigen 类型的直接 alias：
 
 ```cpp
 namespace pgo::math {
 
 using Index = std::uint32_t;
+using DenseIndex = Eigen::Index;
 
-template <class Backend>
-concept MathBackend = requires {
-    typename Backend::template Vec<double, 3>;
-    typename Backend::template Mat<double, 3, 3>;
-    typename Backend::template DVec<double>;
-    typename Backend::template DMat<double>;
-    typename Backend::template SparseMat<double>;
-    typename Backend::template Triplet<double>;
-};
+[[nodiscard]] constexpr DenseIndex dense_index(const std::size_t index) {
+    return static_cast<DenseIndex>(index);
+}
 
-using DefaultBackend = pgo::math::eigen::EigenBackend;
-static_assert(MathBackend<DefaultBackend>);
+template <typename T, int Dim>
+using Vec = Eigen::Matrix<T, Dim, 1>;
 
-template <ScalarLike T, int Dim>
-using Vec = DefaultBackend::template Vec<T, Dim>;
+template <typename T, int Rows, int Cols>
+using Mat = Eigen::Matrix<T, Rows, Cols>;
 
-template <ScalarLike T, int Rows, int Cols>
-using Mat = DefaultBackend::template Mat<T, Rows, Cols>;
+template <typename T>
+using DVec = Eigen::Matrix<T, Eigen::Dynamic, 1>;
 
-template <ScalarLike T>
-using DVec = DefaultBackend::template DVec<T>;
+template <typename T>
+using DMat = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>;
 
-template <ScalarLike T>
-using DMat = DefaultBackend::template DMat<T>;
+template <typename T>
+using SparseMat = Eigen::SparseMatrix<T, Eigen::RowMajor>;
 
-template <RealScalar T>
-using SparseMat = DefaultBackend::template SparseMat<T>;
-
-template <RealScalar T>
-using Triplet = DefaultBackend::template Triplet<T>;
+template <typename T>
+using Triplet = Eigen::Triplet<T>;
 
 } // namespace pgo::math
 ```
 
 设计约束：
 
-- Milestone 1 的业务代码优先使用 `pgo::math::Vec`、`DVec`、`SparseMat` 等默认 aliases。
-- 如果某个算法需要显式依赖 backend，可以模板化为 `template <class Backend = pgo::math::DefaultBackend>`。
-- 未来 GPU backend 不一定实现 host-side `DVec/SparseMat`，但 local formula 的 `ScalarLike + small Vec/Mat` 形状应保持可迁移。
+- 移除了复杂的 `MathBackend` 概念和 `scalar.hpp` 类型约束，转而直接在 `types.hpp` 中通过 `typename T` 提供透明的 Eigen alias。
+- 业务代码优先使用 `pgo::math::Vec`、`DVec`、`SparseMat` 等别名，保持代码整洁。
+- `SparseMat<T>` 和 `Triplet<T>` 约定只接受浮点数（受限于 Eigen）。
 
-- [x] **Step 4: 添加 math backend 测试**
+- [x] **Step 2: 添加 math types 测试**
 
 在 `tests/CMakeLists.txt` 中加入 `tests/math/test_backend.cpp`。测试文件命名空间使用：
 
@@ -1002,12 +928,9 @@ namespace pgo::math::test {
 
 测试内容：
 
-- `static_assert(pgo::math::MathBackend<pgo::math::DefaultBackend>)`。
 - `pgo::math::Vec<double, 3>` 的 size 是 3。
 - `pgo::math::DVec<double>` 可以 resize 到 4。
 - `pgo::math::SparseMat<double>` 是 row-major sparse matrix。
-- `ScalarLike` 接受 `double`。
-- `RealScalar` 接受 `double`。
 
 
 ### Task 1.3: 添加 GPU-aware host storage primitive
@@ -1020,13 +943,13 @@ namespace pgo::math::test {
 
 ```cpp
 namespace pgo::storage {
-template <class T>
+template <typename T>
 using ArrayView = std::span<T>;
 
-template <class T>
+template <typename T>
 using ConstArrayView = std::span<const T>;
 
-template <class T>
+template <typename T>
 using HostBuffer = std::vector<T>;
 }
 ```
@@ -1405,13 +1328,13 @@ LocalEnergyModel -> LocalEnergyProvider -> CPUAssembler -> FullEnergy quantities
 ```cpp
 namespace pgo::math {
 
-template <RealScalar T, class F>
+template <typename T, typename F>
 [[nodiscard]] DVec<T> finite_difference_gradient(
     F&& value_function,
     const DVec<T>& x,
     T eps);
 
-template <RealScalar T, class Grad>
+template <typename T, typename Grad>
 [[nodiscard]] DMat<T> finite_difference_hessian_from_gradient(
     Grad&& gradient_function,
     const DVec<T>& x,
@@ -1492,10 +1415,10 @@ ctest --preset debug -R finite
 ```cpp
 namespace pgo::assembly {
 
-template <pgo::math::RealScalar T>
+template <typename T>
 using LocalVector = pgo::math::DVec<T>;
 
-template <pgo::math::RealScalar T>
+template <typename T>
 using LocalMatrix = pgo::math::DMat<T>;
 
 } // namespace pgo::assembly
@@ -1513,8 +1436,8 @@ using LocalMatrix = pgo::math::DMat<T>;
 ```cpp
 namespace pgo::energy {
 
-template <class Energy, class T>
-concept FullEnergy = pgo::math::RealScalar<T> && requires(
+template <typename Energy, typename T>
+concept FullEnergy = typename T && requires(
     const Energy& energy,
     const pgo::math::DVec<T>& u,
     T& value,
@@ -1542,8 +1465,8 @@ concept FullEnergy = pgo::math::RealScalar<T> && requires(
 ```cpp
 namespace pgo::energy {
 
-template <class Model, class T, class LocalData>
-concept LocalEnergyModel = pgo::math::RealScalar<T> && requires(
+template <typename Model, typename T, typename LocalData>
+concept LocalEnergyModel = typename T && requires(
     const LocalData& local_data,
     const pgo::assembly::LocalVector<T>& local_u,
     pgo::assembly::LocalVector<T>& local_g,
@@ -1555,7 +1478,7 @@ concept LocalEnergyModel = pgo::math::RealScalar<T> && requires(
     Model::hessian(local_data, local_u, local_H);
 };
 
-template <class Model, class T, class LocalData>
+template <typename Model, typename T, typename LocalData>
 concept FusedLocalEnergyModel = LocalEnergyModel<Model, T, LocalData> && requires(
     const LocalData& local_data,
     const pgo::assembly::LocalVector<T>& local_u,
@@ -1574,8 +1497,8 @@ concept FusedLocalEnergyModel = LocalEnergyModel<Model, T, LocalData> && require
 ```cpp
 namespace pgo::energy {
 
-template <class EnergyProvider, class T>
-concept LocalEnergyProvider = pgo::math::RealScalar<T> && requires(
+template <typename EnergyProvider, typename T>
+concept LocalEnergyProvider = typename T && requires(
     const EnergyProvider& energy_provider,
     std::size_t local_id,
     const pgo::math::DVec<T>& full_u,
@@ -1590,7 +1513,7 @@ concept LocalEnergyProvider = pgo::math::RealScalar<T> && requires(
     energy_provider.local_hessian(local_id, full_u, local_H);
 };
 
-template <class EnergyProvider, class T>
+template <typename EnergyProvider, typename T>
 concept FusedLocalEnergyProvider = LocalEnergyProvider<EnergyProvider, T> && requires(
     const EnergyProvider& energy_provider,
     std::size_t local_id,
@@ -1673,25 +1596,25 @@ ctest --preset debug -R EnergyConcept
 ```cpp
 namespace pgo::assembly {
 
-template <pgo::math::RealScalar T, class EnergyProvider>
+template <typename T, typename EnergyProvider>
     requires pgo::energy::LocalEnergyProvider<EnergyProvider, T>
 [[nodiscard]] T assemble_value(const EnergyProvider& energy_provider, const pgo::math::DVec<T>& full_u);
 
-template <pgo::math::RealScalar T, class EnergyProvider>
+template <typename T, typename EnergyProvider>
     requires pgo::energy::LocalEnergyProvider<EnergyProvider, T>
 void assemble_gradient(
     const EnergyProvider& energy_provider,
     const pgo::math::DVec<T>& full_u,
     pgo::math::DVec<T>& full_gradient);
 
-template <pgo::math::RealScalar T, class EnergyProvider>
+template <typename T, typename EnergyProvider>
     requires pgo::energy::LocalEnergyProvider<EnergyProvider, T>
 void assemble_hessian(
     const EnergyProvider& energy_provider,
     const pgo::math::DVec<T>& full_u,
     pgo::math::SparseMat<T>& full_hessian);
 
-template <pgo::math::RealScalar T, class EnergyProvider>
+template <typename T, typename EnergyProvider>
     requires pgo::energy::LocalEnergyProvider<EnergyProvider, T>
 void assemble_value_gradient_hessian(
     const EnergyProvider& energy_provider,
@@ -1799,14 +1722,14 @@ L = ||X_i - X_j||
 ```cpp
 namespace pgo::energy {
 
-template <pgo::math::RealScalar T, int Dim>
+template <typename T, int Dim>
 struct MassSpringLocalData {
     pgo::math::Vec<T, Dim> rest_i;
     pgo::math::Vec<T, Dim> rest_j;
     T stiffness;
 };
 
-template <pgo::math::RealScalar T, int Dim>
+template <typename T, int Dim>
 class MassSpringLocalEnergyModel {
 public:
     [[nodiscard]] static std::size_t local_dof_count(const MassSpringLocalData<T, Dim>& data);
@@ -1837,7 +1760,7 @@ public:
 Provider 是 mesh/full-u/material gather 层：
 
 ```cpp
-template <pgo::math::RealScalar T, int Dim>
+template <typename T, int Dim>
 class MassSpringLocalEnergyProvider {
 public:
     MassSpringLocalEnergyProvider(const pgo::geometry::RestMesh<T, Dim>& mesh, T uniform_stiffness);

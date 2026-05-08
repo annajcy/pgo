@@ -436,13 +436,13 @@ struct GpuOptions {
 ```cpp
 namespace pgo::gpu {
 
-template <class T>
+template <typename T>
 struct DeviceSpan {
     T* data = nullptr;
     std::size_t size = 0;
 };
 
-template <class T>
+template <typename T>
 struct ConstDeviceSpan {
     const T* data = nullptr;
     std::size_t size = 0;
@@ -743,7 +743,7 @@ Ap_vertex = sum incident edge contribution for this vertex
 ```cpp
 namespace pgo::linear_system {
 
-template <class P>
+template <typename P>
 concept GpuPreconditioner = requires(P p) {
     p.assemble();
     p.apply();

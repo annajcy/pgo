@@ -7,7 +7,6 @@
 #include "pgo/storage/array_view.hpp"
 #include "pgo/storage/host_buffer.hpp"
 
-#include <cmath>
 #include <cstddef>
 #include <type_traits>
 #include <vector>
