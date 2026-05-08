@@ -5,50 +5,25 @@
 #include "pgo/math/backend.hpp"
 #include "pgo/storage/array_view.hpp"
 
-#include <algorithm>
 #include <concepts>
 #include <cstddef>
-#include <vector>
+#include <optional>
+#include <unordered_map>
 
 namespace pgo::dof {
 
 template <class Boundary, class T>
 concept DirichletBoundaryLike = pgo::math::ScalarLike<T> && requires(const Boundary& boundary, const std::size_t dof) {
-    { boundary.is_fixed(dof) } -> std::same_as<bool>;
-    { boundary.value(dof) } -> std::same_as<T>;
+    { boundary.fixed_value(dof) } -> std::same_as<std::optional<T>>;
 };
 
 template <pgo::math::ScalarLike T>
 class DirichletBoundary {
-    struct FixedValue {
-        std::size_t dof;
-        T value;
-    };
-
-    std::vector<FixedValue> m_fixed_values;
-
-private:
-    [[nodiscard]] auto find_fixed_value(const std::size_t dof) {
-        return std::lower_bound(
-            m_fixed_values.begin(), m_fixed_values.end(), dof,
-            [](const FixedValue& fixed_value, const std::size_t target_dof) { return fixed_value.dof < target_dof; });
-    }
-
-    [[nodiscard]] auto find_fixed_value(const std::size_t dof) const {
-        return std::lower_bound(
-            m_fixed_values.begin(), m_fixed_values.end(), dof,
-            [](const FixedValue& fixed_value, const std::size_t target_dof) { return fixed_value.dof < target_dof; });
-    }
+    std::unordered_map<std::size_t, T> m_fixed_values;
 
 public:
     void prescribe_dof(const std::size_t dof, const T value) {
-        const auto fixed_value = find_fixed_value(dof);
-        if (fixed_value != m_fixed_values.end() && fixed_value->dof == dof) {
-            fixed_value->value = value;
-            return;
-        }
-
-        m_fixed_values.insert(fixed_value, FixedValue{dof, value});
+        m_fixed_values[dof] = value;
     }
 
     void fix_dof(const std::size_t dof) {
@@ -56,14 +31,21 @@ public:
     }
 
     [[nodiscard]] bool is_fixed(const std::size_t dof) const {
-        const auto fixed_value = find_fixed_value(dof);
-        return fixed_value != m_fixed_values.end() && fixed_value->dof == dof;
+        return m_fixed_values.contains(dof);
+    }
+
+    [[nodiscard]] std::optional<T> fixed_value(const std::size_t dof) const {
+        const auto fixed_value = m_fixed_values.find(dof);
+        if (fixed_value == m_fixed_values.end()) {
+            return std::nullopt;
+        }
+        return fixed_value->second;
     }
 
     [[nodiscard]] T value(const std::size_t dof) const {
-        const auto fixed_value = find_fixed_value(dof);
-        pgo::base::require(fixed_value != m_fixed_values.end() && fixed_value->dof == dof, "DOF is not fixed");
-        return fixed_value->value;
+        const auto fixed = fixed_value(dof);
+        pgo::base::require(fixed.has_value(), "DOF is not fixed");
+        return *fixed;
     }
 };
 
@@ -71,7 +53,7 @@ public:
 
 template <int Dim, class Boundary, pgo::math::ScalarLike T>
 void prescribe_component(Boundary& boundary, const DofLayout<Dim>& layout, const std::size_t vertex,
-                          const std::size_t component, const T value) {
+                         const std::size_t component, const T value) {
     boundary.prescribe_dof(layout.index(vertex, component), value);
 }
 

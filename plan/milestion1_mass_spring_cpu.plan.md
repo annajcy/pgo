@@ -1135,14 +1135,26 @@ dof = vertex * Dim + component
 
 - [x] **Step 3: 实现 `DirichletBoundary<T>` 和 vertex helper free functions**
 
-`DirichletBoundary<T>` 是稀疏的边界条件 builder，底层用 sorted vector 保存 fixed DOF values。只提供核心的标量 DOF 操作：
+`DirichletBoundary<T>` 是稀疏的边界条件 builder / prescribed value store，底层使用 `std::unordered_map<std::size_t, T>` 保存 fixed DOF values。它不需要稳定遍历顺序；`ReducedDofMap` 通过遍历 `[0, full_dofs)` 构造 deterministic free/fixed mapping。
+
+只提供核心的标量 DOF 操作：
 
 - `prescribe_dof(dof, value)`：固定单个 scalar displacement DOF 到指定值。
 - `fix_dof(dof)`：固定单个 scalar displacement DOF 到 `0`，dispatch 到 `prescribe_dof(dof, T{0})`。
 - `is_fixed(dof)`：查询 full DOF 是否固定。
-- `value(dof)`：读取 fixed displacement value。
+- `fixed_value(dof)`：读取 fixed displacement value；如果不是 fixed DOF，返回 `std::nullopt`。
+- `value(dof)`：读取 fixed displacement value 的 throwing convenience API。
 
-`DirichletBoundaryLike<Boundary, T>` concept 要求 `is_fixed(dof)` 和 `value(dof)`。`DirichletBoundary` 和 `ReducedDofMap` 均满足此 concept。
+实现要求：
+
+- `prescribe_dof(dof, value)` 直接写入/覆盖 `unordered_map`。
+- `fix_dof(dof)` 调用 `prescribe_dof(dof, T{0})`。
+- `is_fixed(dof)` 使用 `contains`。
+- `fixed_value(dof)` 找不到时返回 `std::nullopt`。
+- `value(dof)` 找不到时抛出 `std::runtime_error`。
+- `DirichletBoundary` 是 host-side builder，不能进入 geometry/storage/GPU-facing flat buffers。
+
+`DirichletBoundaryLike<Boundary, T>` concept 只要求 `fixed_value(dof) -> std::optional<T>`。`is_fixed(dof)` 和 `value(dof)` 是具体 boundary 类型可提供的 convenience API，但 solver/reduced map 不依赖它们。`DirichletBoundary` 和 `ReducedDofMap` 均满足此 concept。
 
 Vertex-level convenience helpers 提取为 **namespace-scope free functions**，对任何支持 `prescribe_dof`/`fix_dof` 的 boundary 类型通用：
 
@@ -1156,27 +1168,86 @@ Vertex-level convenience helpers 提取为 **namespace-scope free functions**，
 
 设计约束：solver/reduced map 只依赖 `DirichletBoundaryLike` concept；vertex helpers 是 free functions，不与具体 boundary 类绑定。
 
-- [x] **Step 4: 实现 `ReducedDofMap<T>`**
+- [x] **Step 4: 实现语义化 `ReducedDofMap<T>` API**
 
 职责：从 `DirichletBoundaryLike` boundary snapshot 构建 immutable 的 DOF 映射，同时自身也满足 `DirichletBoundaryLike` concept（可作为 dense boundary snapshot 使用）。
 
 核心 API：
 
 - 构造：`ReducedDofMap(full_dofs, boundary)` — 从 boundary 生成 `free_to_full` / `full_to_free` 双向映射并快照 prescribed values。
-- 查询：`full_dofs()`, `free_dofs()`, `full_dof(free)`, `free_dof(full)`, `is_free(full)`, `is_fixed(full)`, `value(full)`, `fixed_value(full)`。
+- 查询：`full_dofs()`, `free_dofs()`, `full_dof(free)`, `free_dof(full)`, `is_free(full)`, `is_fixed(full)`, `fixed_value(full) -> std::optional<T>`, `value(full)`。
 
-消元 API（符合标准 FEM Dirichlet 消元规律）：
+必须按不同数学对象拆分 API，不允许用一个 `pack/unpack/reduce` 名字同时表达多种语义：
 
-- `pack_rhs(full_f, full_K)` → `f_free − K_fc · g`：正确的消元 RHS，减去 free×fixed block 与 prescribed values 的乘积。
-- `pack_matrix(full_K)` → `K_ff`：提取 free×free block。
-- `unpack_matrix(K_ff)` → full-size matrix：free×free block 放回原位，fixed DOF 对角线放 `1`（identity，消元规律）。
-- `unpack_solution(free_u)` → full displacement：free DOF 填入 `free_u`，fixed DOF 填入 prescribed values。
+```cpp
+[[nodiscard]] pgo::math::DVec<T>
+scatter_solution(const pgo::math::DVec<T>& free_solution) const;
+
+[[nodiscard]] pgo::math::DVec<T>
+scatter_direction(const pgo::math::DVec<T>& free_direction) const;
+
+[[nodiscard]] pgo::math::DVec<T>
+restrict_vector_to_free(const pgo::math::DVec<T>& full_vector) const;
+
+[[nodiscard]] pgo::math::SparseMat<T>
+restrict_matrix_to_free(const pgo::math::SparseMat<T>& full_matrix) const;
+
+[[nodiscard]] pgo::math::DVec<T>
+eliminate_rhs_for_dirichlet(
+    const pgo::math::DVec<T>& full_rhs,
+    const pgo::math::SparseMat<T>& full_matrix) const;
+```
+
+数学语义：
+
+- `scatter_solution(free_solution)` 对应 solution/state：
+
+```text
+u = P y + G g
+```
+
+free DOF 填入 `free_solution`，fixed DOF 填入 snapshot prescribed values。
+
+- `scatter_direction(free_direction)` 对应 direction/increment：
+
+```text
+du = P dy
+```
+
+free DOF 填入 `free_direction`，fixed DOF 必须填 `0`。不要用 `scatter_solution(delta_y)` 处理 Newton direction、line-search direction、CCD direction 或 debug step direction。
+
+- `restrict_vector_to_free(full_vector)` 对应 vector restriction：
+
+```text
+v_red = P^T v_full
+```
+
+它只是提取 full vector 的 free DOF，不做 `K_fc g` 修正。IPC / energy reduced gradient 必须使用这个 API。
+
+- `restrict_matrix_to_free(full_matrix)` 对应 matrix restriction：
+
+```text
+A_red = P^T A_full P
+```
+
+它只提取 free-free block。IPC / energy reduced Hessian 必须使用这个 API。
+
+- `eliminate_rhs_for_dirichlet(full_rhs, full_matrix)` 对应直接线性系统 Dirichlet 消元：
+
+```text
+A u = b
+A_ff y = b_f - A_fc g
+```
+
+它只适合直接线性系统 RHS 消元，不能用于 energy gradient projection。
 
 设计约束：
 
-- 不提供 `pack_vector`（容易误用于 force vector 而遗漏 K_fc·g 修正）。
-- `unpack_matrix` 固定 DOF 对角线为 1，不论 prescribed value 是否为 0（prescribed value 进 RHS，不进矩阵）。
+- 不提供 `pack_vector`、`reduce_vector`、`reduce_sparse_mat` 这类含糊 API。
+- 不保留 `pack_rhs`、`pack_matrix`、`unpack_solution` 旧命名。
+- `unpack_matrix` 不作为 Phase 1 核心 API 保留；如果后续确实需要 full-size debug/visualization matrix，再单独设计 `scatter_matrix_with_dirichlet_identity`。
 - `ReducedDofMap` 是 construct-once immutable snapshot，不提供 mutable 的 `prescribe_dof`。
+- 当前 Milestone 1 保留 snapshot prescribed values；如果 prescribed displacement 后续随 timestep 或 animation 高频变化，再升级为 pattern map 与 value provider 分离的 API，例如 `scatter_solution(free_solution, boundary)`。
 
 - [x] **Step 5: 把 DOF 测试加入测试 target**
 
@@ -1199,13 +1270,15 @@ add_executable(pgo_tests
 - `DofLayout<3>(4)` 有 12 个 DOF。
 - `layout.index(2, 1) == 7`。
 - `DirichletBoundary` 核心 API：`fix_dof`、`prescribe_dof`、`is_fixed`、`value`。
+- `DirichletBoundary` 覆盖写入：同一个 DOF 多次 `prescribe_dof` 后返回最后一次 prescribed value。
 - Vertex helper free functions：`fix_vertex`、`prescribe_vertex`、`fix_vertices`、`prescribe_vertices`、`prescribe_vertices_by_list`。
-- `ReducedDofMap` 满足 `DirichletBoundaryLike` concept（`is_fixed`、`value`）。
-- `pack_rhs(f, K)` 正确实现消元 RHS（`f_free − K_fc · g`），非零 prescribed values 下验证。
-- `pack_matrix(K)` 提取 free×free block。
-- `unpack_matrix(K_ff)` 还原矩阵，fixed DOF 对角线为 1。
-- `unpack_solution(free_u)` 还原解向量，fixed DOF 填 prescribed values。
-- End-to-end elimination test：构建 SPD 系统 → pack → solve → unpack → 验证 K·u = f 残差为零。
+- `ReducedDofMap` 满足 `DirichletBoundaryLike` concept（`fixed_value` 返回 `std::optional<T>`）。
+- `scatter_solution(free_solution)` 还原 solution/state：free DOF 填 reduced solution，fixed DOF 填 snapshot prescribed values。
+- `scatter_direction(free_direction)` 还原 direction/increment：free DOF 填 reduced direction，fixed DOF 填 `0`。
+- `restrict_vector_to_free(full_vector)` 正确实现 `P^T v`。
+- `restrict_matrix_to_free(full_matrix)` 正确实现 `P^T A P`，即提取 free-free sparse block。
+- `eliminate_rhs_for_dirichlet(full_rhs, full_matrix)` 正确实现直接线性系统 RHS 消元（`b_f − A_fc · g`），非零 prescribed values 下验证。
+- End-to-end elimination test：构建 SPD 系统 → `restrict_matrix_to_free(A)` → `eliminate_rhs_for_dirichlet(b, A)` → solve → `scatter_solution(y)` → 验证 `A·u = b` 的 free rows 残差为零。
 
 - [x] **Step 7: 运行测试**
 
@@ -1435,11 +1508,36 @@ ctest --preset debug -R finite
 职责：
 
 ```text
-free_u -> unpack_solution 成 full_u
+free_u -> scatter_solution 成 full_u
 full energy evaluate
-full gradient 通过 pack_rhs 变成 reduced gradient（含 K_fc·g 修正）
-full Hessian 通过 pack_matrix 变成 reduced Hessian
+full gradient 通过 restrict_vector_to_free 变成 reduced gradient
+full Hessian 通过 restrict_matrix_to_free 变成 reduced Hessian
 ```
+
+实现语义：
+
+```cpp
+const auto full_u = dof_map.scatter_solution(free_u);
+
+full_energy.value_gradient_hessian(
+    full_u,
+    value,
+    full_gradient,
+    full_hessian);
+
+reduced_gradient = dof_map.restrict_vector_to_free(full_gradient);
+reduced_hessian = dof_map.restrict_matrix_to_free(full_hessian);
+```
+
+数学语义：
+
+```text
+E_red(y) = E_full(P y + G g)
+grad_red = P^T grad_full(P y + G g)
+H_red = P^T H_full(P y + G g) P
+```
+
+重要约束：`eliminate_rhs_for_dirichlet(full_rhs, full_matrix)` 只用于直接线性系统 `A u = b` 的 RHS 消元，不用于 reduced energy gradient。energy gradient 已经在 `full_u = P y + G g` 上 evaluate 过，prescribed displacement 的影响已经包含在 `full_gradient` 中。
 
 - [ ] **Step 3: 添加 reduced energy 测试**
 
@@ -1449,7 +1547,14 @@ full Hessian 通过 pack_matrix 变成 reduced Hessian
 E(u) = 0.5 * u^T A u - b^T u
 ```
 
-固定一个 DOF，验证 reduced gradient/Hessian 分别等于 `reduce_vector(full_gradient)` 和 `reduce_sparse_mat(full_hessian)` 的结果。
+固定一个 DOF，验证 reduced gradient/Hessian 分别等于：
+
+```text
+restrict_vector_to_free(full_gradient)
+restrict_matrix_to_free(full_hessian)
+```
+
+测试必须覆盖非零 prescribed displacement，用于防止错误地把 `eliminate_rhs_for_dirichlet(full_gradient, full_hessian)` 当成 reduced gradient projection。
 
 - [ ] **Step 4: 运行测试**
 

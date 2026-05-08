@@ -6,6 +6,7 @@
 #include <Eigen/SparseLU>
 #include <array>
 #include <gtest/gtest.h>
+#include <optional>
 #include <stdexcept>
 #include <vector>
 
@@ -39,11 +40,16 @@ TEST(DirichletBoundary, FixesAndPrescribesScalarDofs) {
 
     boundary.fix_dof(2);
     boundary.prescribe_dof(5, 1.25);
+    boundary.prescribe_dof(5, 2.5);
 
     EXPECT_TRUE(boundary.is_fixed(2));
     EXPECT_TRUE(boundary.is_fixed(5));
     EXPECT_DOUBLE_EQ(0.0, boundary.value(2));
-    EXPECT_DOUBLE_EQ(1.25, boundary.value(5));
+    EXPECT_DOUBLE_EQ(2.5, boundary.value(5));
+    ASSERT_TRUE(boundary.fixed_value(5).has_value());
+    EXPECT_DOUBLE_EQ(2.5, *boundary.fixed_value(5));
+    EXPECT_EQ(std::nullopt, boundary.fixed_value(0));
+    EXPECT_THROW(static_cast<void>(boundary.value(0)), std::runtime_error);
 }
 
 TEST(DirichletBoundary, SupportsVertexAndListHelpers) {
@@ -77,8 +83,7 @@ TEST(DirichletBoundary, SupportsPerVertexFlatPrescribedValues) {
     const std::array<std::size_t, 2> vertices{0, 2};
     const std::array<double, 4> values{1.0, 2.0, 3.0, 4.0};
 
-    pgo::dof::prescribe_vertices_by_list(boundary, layout, vertices,
-                                          pgo::storage::ConstArrayView<double>{values});
+    pgo::dof::prescribe_vertices_by_list(boundary, layout, vertices, pgo::storage::ConstArrayView<double>{values});
 
     EXPECT_DOUBLE_EQ(1.0, boundary.value(layout.index(0, 0)));
     EXPECT_DOUBLE_EQ(2.0, boundary.value(layout.index(0, 1)));
@@ -87,7 +92,7 @@ TEST(DirichletBoundary, SupportsPerVertexFlatPrescribedValues) {
 
     const std::array<double, 3> wrong_length_values{1.0, 2.0, 3.0};
     EXPECT_THROW(pgo::dof::prescribe_vertices_by_list(boundary, layout, vertices,
-                                                       pgo::storage::ConstArrayView<double>{wrong_length_values}),
+                                                      pgo::storage::ConstArrayView<double>{wrong_length_values}),
                  std::runtime_error);
 }
 
@@ -101,10 +106,13 @@ TEST(ReducedDofMap, SatisfiesDirichletBoundaryLikeAndSupportsVertexHelpers) {
 
     const pgo::dof::ReducedDofMap<double> map{layout.num_dofs(), boundary};
 
-    // DirichletBoundaryLike interface
+    // DirichletBoundaryLike and convenience query interface
     EXPECT_TRUE(map.is_fixed(layout.index(1, 0)));
     EXPECT_TRUE(map.is_fixed(layout.index(1, 1)));
     EXPECT_FALSE(map.is_fixed(layout.index(0, 0)));
+    ASSERT_TRUE(map.fixed_value(layout.index(1, 0)).has_value());
+    ASSERT_TRUE(map.fixed_value(layout.index(1, 1)).has_value());
+    EXPECT_EQ(std::nullopt, map.fixed_value(layout.index(0, 0)));
     EXPECT_DOUBLE_EQ(3.0, map.value(layout.index(1, 0)));
     EXPECT_DOUBLE_EQ(4.0, map.value(layout.index(1, 1)));
 
@@ -114,12 +122,11 @@ TEST(ReducedDofMap, SatisfiesDirichletBoundaryLikeAndSupportsVertexHelpers) {
     EXPECT_FALSE(map.is_free(layout.index(1, 1)));
 }
 
-TEST(ReducedDofMap, PacksAndUnpacksDisplacements) {
+TEST(ReducedDofMap, ScattersSolutionsAndDirectionsWithDifferentFixedDofSemantics) {
     pgo::dof::DirichletBoundary<double> boundary{};
     boundary.prescribe_dof(1, 10.0);
     boundary.prescribe_dof(4, 20.0);
     const pgo::dof::ReducedDofMap<double> map{6, boundary};
-    EXPECT_NO_THROW(map.validate_boundary_snapshot(boundary));
     EXPECT_EQ(0, map.full_dof(0));
     EXPECT_EQ(2, map.full_dof(1));
     EXPECT_EQ(3, map.full_dof(2));
@@ -127,29 +134,37 @@ TEST(ReducedDofMap, PacksAndUnpacksDisplacements) {
     EXPECT_EQ(1, map.free_dof(2));
     EXPECT_THROW(static_cast<void>(map.full_dof(4)), std::runtime_error);
     EXPECT_THROW(static_cast<void>(map.free_dof(1)), std::runtime_error);
-    EXPECT_DOUBLE_EQ(10.0, map.fixed_value(1));
-    EXPECT_DOUBLE_EQ(20.0, map.fixed_value(4));
-    EXPECT_THROW(static_cast<void>(map.fixed_value(0)), std::runtime_error);
+    ASSERT_TRUE(map.fixed_value(1).has_value());
+    ASSERT_TRUE(map.fixed_value(4).has_value());
+    EXPECT_DOUBLE_EQ(10.0, *map.fixed_value(1));
+    EXPECT_DOUBLE_EQ(20.0, *map.fixed_value(4));
+    EXPECT_EQ(std::nullopt, map.fixed_value(0));
+    EXPECT_THROW(static_cast<void>(map.value(0)), std::runtime_error);
 
-
-
-    pgo::math::DVec<double> replacement_free_u{4};
-    replacement_free_u << 9.0, 8.0, 7.0, 6.0;
+    pgo::math::DVec<double> free_values{4};
+    free_values << 9.0, 8.0, 7.0, 6.0;
 
     boundary.prescribe_dof(1, 100.0);
     boundary.prescribe_dof(4, 200.0);
-    EXPECT_THROW(map.validate_boundary_snapshot(boundary), std::runtime_error);
 
-    const auto unpacked_u = map.unpack_solution(replacement_free_u);
-    EXPECT_DOUBLE_EQ(9.0, unpacked_u[0]);
-    EXPECT_DOUBLE_EQ(10.0, unpacked_u[1]);
-    EXPECT_DOUBLE_EQ(8.0, unpacked_u[2]);
-    EXPECT_DOUBLE_EQ(7.0, unpacked_u[3]);
-    EXPECT_DOUBLE_EQ(20.0, unpacked_u[4]);
-    EXPECT_DOUBLE_EQ(6.0, unpacked_u[5]);
+    const auto solution = map.scatter_solution(free_values);
+    EXPECT_DOUBLE_EQ(9.0, solution[0]);
+    EXPECT_DOUBLE_EQ(10.0, solution[1]);
+    EXPECT_DOUBLE_EQ(8.0, solution[2]);
+    EXPECT_DOUBLE_EQ(7.0, solution[3]);
+    EXPECT_DOUBLE_EQ(20.0, solution[4]);
+    EXPECT_DOUBLE_EQ(6.0, solution[5]);
+
+    const auto direction = map.scatter_direction(free_values);
+    EXPECT_DOUBLE_EQ(9.0, direction[0]);
+    EXPECT_DOUBLE_EQ(0.0, direction[1]);
+    EXPECT_DOUBLE_EQ(8.0, direction[2]);
+    EXPECT_DOUBLE_EQ(7.0, direction[3]);
+    EXPECT_DOUBLE_EQ(0.0, direction[4]);
+    EXPECT_DOUBLE_EQ(6.0, direction[5]);
 }
 
-TEST(ReducedDofMap, PacksAndUnpacksSparseMatrices) {
+TEST(ReducedDofMap, RestrictsVectorsAndSparseMatricesToFreeDofs) {
     // 6 full DOFs, fix DOFs 1 and 4 → 4 free DOFs (0, 2, 3, 5)
     pgo::dof::DirichletBoundary<double> boundary{};
     boundary.fix_dof(1);
@@ -158,42 +173,38 @@ TEST(ReducedDofMap, PacksAndUnpacksSparseMatrices) {
 
     // Build a 6×6 sparse matrix with entries at known positions
     std::vector<pgo::math::Triplet<double>> full_triplets;
-    full_triplets.emplace_back(0, 0, 1.0);  // free×free → kept
-    full_triplets.emplace_back(0, 2, 2.0);  // free×free → kept
-    full_triplets.emplace_back(1, 0, 3.0);  // fixed×free → dropped
-    full_triplets.emplace_back(2, 1, 4.0);  // free×fixed → dropped
-    full_triplets.emplace_back(3, 5, 5.0);  // free×free → kept
-    full_triplets.emplace_back(5, 3, 6.0);  // free×free → kept
-    full_triplets.emplace_back(4, 4, 7.0);  // fixed×fixed → dropped
+    full_triplets.emplace_back(0, 0, 1.0); // free×free → kept
+    full_triplets.emplace_back(0, 2, 2.0); // free×free → kept
+    full_triplets.emplace_back(1, 0, 3.0); // fixed×free → dropped
+    full_triplets.emplace_back(2, 1, 4.0); // free×fixed → dropped
+    full_triplets.emplace_back(3, 5, 5.0); // free×free → kept
+    full_triplets.emplace_back(5, 3, 6.0); // free×free → kept
+    full_triplets.emplace_back(4, 4, 7.0); // fixed×fixed → dropped
 
     pgo::math::SparseMat<double> full_mat(6, 6);
     full_mat.setFromTriplets(full_triplets.begin(), full_triplets.end());
 
-    // Pack: 6×6 → 4×4, free DOFs map: 0→0, 2→1, 3→2, 5→3
-    const auto free_mat = map.pack_matrix(full_mat);
+    pgo::math::DVec<double> full_vector{6};
+    full_vector << 10.0, 20.0, 30.0, 40.0, 50.0, 60.0;
+    const auto free_vector = map.restrict_vector_to_free(full_vector);
+    EXPECT_EQ(4, free_vector.size());
+    EXPECT_DOUBLE_EQ(10.0, free_vector[0]);
+    EXPECT_DOUBLE_EQ(30.0, free_vector[1]);
+    EXPECT_DOUBLE_EQ(40.0, free_vector[2]);
+    EXPECT_DOUBLE_EQ(60.0, free_vector[3]);
+
+    // Restrict: 6×6 → 4×4, free DOFs map: 0→0, 2→1, 3→2, 5→3
+    const auto free_mat = map.restrict_matrix_to_free(full_mat);
     EXPECT_EQ(4, free_mat.rows());
     EXPECT_EQ(4, free_mat.cols());
-    EXPECT_DOUBLE_EQ(1.0, free_mat.coeff(0, 0));  // (0,0)→(0,0)
-    EXPECT_DOUBLE_EQ(2.0, free_mat.coeff(0, 1));  // (0,2)→(0,1)
-    EXPECT_DOUBLE_EQ(5.0, free_mat.coeff(2, 3));  // (3,5)→(2,3)
-    EXPECT_DOUBLE_EQ(6.0, free_mat.coeff(3, 2));  // (5,3)→(3,2)
-    EXPECT_DOUBLE_EQ(0.0, free_mat.coeff(1, 0));  // not present
-
-    // Unpack: 4×4 → 6×6, fixed DOFs get identity on diagonal
-    const auto roundtrip_mat = map.unpack_matrix(free_mat);
-    EXPECT_EQ(6, roundtrip_mat.rows());
-    EXPECT_EQ(6, roundtrip_mat.cols());
-    EXPECT_DOUBLE_EQ(1.0, roundtrip_mat.coeff(0, 0));  // free×free entry
-    EXPECT_DOUBLE_EQ(2.0, roundtrip_mat.coeff(0, 2));  // free×free entry
-    EXPECT_DOUBLE_EQ(5.0, roundtrip_mat.coeff(3, 5));  // free×free entry
-    EXPECT_DOUBLE_EQ(6.0, roundtrip_mat.coeff(5, 3));  // free×free entry
-    EXPECT_DOUBLE_EQ(1.0, roundtrip_mat.coeff(1, 1));  // fixed DOF 1: identity
-    EXPECT_DOUBLE_EQ(1.0, roundtrip_mat.coeff(4, 4));  // fixed DOF 4: identity
-    EXPECT_DOUBLE_EQ(0.0, roundtrip_mat.coeff(1, 0));  // fixed off-diagonal: zero
-    EXPECT_DOUBLE_EQ(0.0, roundtrip_mat.coeff(0, 1));  // fixed off-diagonal: zero
+    EXPECT_DOUBLE_EQ(1.0, free_mat.coeff(0, 0)); // (0,0)→(0,0)
+    EXPECT_DOUBLE_EQ(2.0, free_mat.coeff(0, 1)); // (0,2)→(0,1)
+    EXPECT_DOUBLE_EQ(5.0, free_mat.coeff(2, 3)); // (3,5)→(2,3)
+    EXPECT_DOUBLE_EQ(6.0, free_mat.coeff(3, 2)); // (5,3)→(3,2)
+    EXPECT_DOUBLE_EQ(0.0, free_mat.coeff(1, 0)); // not present
 }
 
-TEST(ReducedDofMap, PackRhsAccountsForNonZeroPrescribedValues) {
+TEST(ReducedDofMap, EliminatesRhsForDirichletUsingNonZeroPrescribedValues) {
     // 4 full DOFs, fix DOF 1 = 3.0 and DOF 3 = 5.0 → 2 free DOFs (0, 2)
     //
     //     K = [2 1 0 0]    f = [1]
@@ -232,12 +243,11 @@ TEST(ReducedDofMap, PackRhsAccountsForNonZeroPrescribedValues) {
     pgo::math::DVec<double> f{4};
     f << 1.0, 2.0, 3.0, 4.0;
 
-    // pack_rhs should give f_free - K_fc * g
-    const auto reduced_f = map.pack_rhs(f, K);
+    // eliminate_rhs_for_dirichlet should give f_free - K_fc * g
+    const auto reduced_f = map.eliminate_rhs_for_dirichlet(f, K);
     EXPECT_EQ(2, reduced_f.size());
-    EXPECT_DOUBLE_EQ(-2.0, reduced_f[0]);  // 1 - 1*3 - 0*5 = -2
-    EXPECT_DOUBLE_EQ(-5.0, reduced_f[1]);  // 3 - 1*3 - 1*5 = -5
-
+    EXPECT_DOUBLE_EQ(-2.0, reduced_f[0]); // 1 - 1*3 - 0*5 = -2
+    EXPECT_DOUBLE_EQ(-5.0, reduced_f[1]); // 3 - 1*3 - 1*5 = -5
 }
 
 TEST(ReducedDofMap, EndToEndEliminationSolvesCorrectly) {
@@ -269,9 +279,9 @@ TEST(ReducedDofMap, EndToEndEliminationSolvesCorrectly) {
     pgo::math::DVec<double> f{4};
     f << 1.0, 2.0, 3.0, 4.0;
 
-    // Step 1: Eliminate — pack matrix and RHS
-    const auto K_ff = map.pack_matrix(K);
-    const auto f_reduced = map.pack_rhs(f, K);
+    // Step 1: Eliminate — restrict matrix and eliminate RHS
+    const auto K_ff = map.restrict_matrix_to_free(K);
+    const auto f_reduced = map.eliminate_rhs_for_dirichlet(f, K);
 
     // Step 2: Solve K_ff * u_free = f_reduced
     //   K_ff = [2 0]  f_reduced = [-2]  → u_free = [-1, -1.25]
@@ -284,19 +294,19 @@ TEST(ReducedDofMap, EndToEndEliminationSolvesCorrectly) {
     EXPECT_DOUBLE_EQ(-1.0, u_free[0]);
     EXPECT_DOUBLE_EQ(-1.25, u_free[1]);
 
-    // Step 3: Unpack — reconstruct full displacement
-    const auto u_full = map.unpack_solution(u_free);
+    // Step 3: Scatter — reconstruct full displacement solution
+    const auto u_full = map.scatter_solution(u_free);
     EXPECT_EQ(4, u_full.size());
-    EXPECT_DOUBLE_EQ(-1.0, u_full[0]);    // free DOF 0
-    EXPECT_DOUBLE_EQ(3.0, u_full[1]);     // fixed DOF 1 = prescribed
-    EXPECT_DOUBLE_EQ(-1.25, u_full[2]);   // free DOF 2
-    EXPECT_DOUBLE_EQ(5.0, u_full[3]);     // fixed DOF 3 = prescribed
+    EXPECT_DOUBLE_EQ(-1.0, u_full[0]);  // free DOF 0
+    EXPECT_DOUBLE_EQ(3.0, u_full[1]);   // fixed DOF 1 = prescribed
+    EXPECT_DOUBLE_EQ(-1.25, u_full[2]); // free DOF 2
+    EXPECT_DOUBLE_EQ(5.0, u_full[3]);   // fixed DOF 3 = prescribed
 
     // Step 4: Verify K * u = f for the free DOF rows
     const pgo::math::DVec<double> residual = K * u_full - f;
     // Free DOF rows should have zero residual
-    EXPECT_NEAR(0.0, residual[0], 1e-14);  // row 0 (free)
-    EXPECT_NEAR(0.0, residual[2], 1e-14);  // row 2 (free)
+    EXPECT_NEAR(0.0, residual[0], 1e-14); // row 0 (free)
+    EXPECT_NEAR(0.0, residual[2], 1e-14); // row 2 (free)
     // Fixed DOF rows give reaction forces (not necessarily zero)
 }
 
