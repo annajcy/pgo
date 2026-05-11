@@ -2243,7 +2243,6 @@ struct LineSearchOptions {
     T armijo_c = T{1e-4};
     T shrink = T{0.5};
     T min_step = T{1e-12};
-    T feasibility_safety = T{0.99};
 };
 
 template <typename T>
@@ -2329,7 +2328,7 @@ return 0
 
 **`feasible_armijo_line_search`** — 薄封装，将 feasibility 与 backtrack 正交组合：
 ```text
-feasible_alpha = feasibility_safety * feasible.max_step(z, dz)
+feasible_alpha = feasible.max_step(z, dz)
 backtrack_alpha = armijo_backtrack(energy, z, feasible_alpha * dz, gradient, current_value, options)
 return feasible_alpha * backtrack_alpha
 ```
@@ -2338,7 +2337,7 @@ return feasible_alpha * backtrack_alpha
 
 - `armijo_backtrack` 只依赖 `DifferentiableEnergy`，不依赖 `FeasibleSetLike`，可独立复用于 Newton/L-BFGS 等 solver。
 - Feasibility 只通过 `max_step` 表达（不通过 `is_feasible` 逐点检查）；`max_step` 给出的 bound 天然保证整个回溯区间 feasible。
-- Dirichlet feasibility 已经由 `ReducedEnergyView` 的 reduced variables 保证，不需要 line search 额外检查。
+- 安全 margin（如 0.99×TOI）属于 feasible set 的职责——`AlwaysFeasible::max_step = 1.0` 不需要 margin，未来 `CCDFeasibleSet` 可在自己的 `max_step` 中内建 margin。`LineSearchOptions` 不包含 `feasibility_safety`。
 - Line search 不修改 Hessian，不负责 PSD projection。
 - 如果 `gradient.dot(dz) >= 0`，调用者应该先拒绝 direction；line search 可以 assert/require descent 或返回 0。
 
@@ -2585,6 +2584,7 @@ return TimeStepResult copied from solver_result
 
 - 不引入 `IntegratorBase`、`TimeIntegrator` concept、runtime polymorphism 或 solver policy。
 - `BackwardEuler` 是 orchestration layer：构造 step energy、调用 solver、commit state。
+- **只当 `solver_result.status == converged` 时才 commit state**；提供 `commit_on_failure`（默认 `false`）作为 opt-in。不收敛且未设置 flag 时 `state` 保持不变，避免将半失败状态写出到 example pipeline。
 - Integrator 不实现 line search，不处理 Hessian regularization，不知道 local provider。
 
 - [x] **Step 4: 添加 inertia energy 测试**

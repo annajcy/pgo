@@ -61,7 +61,6 @@ TEST(NewtonSolver, ConvergesToOneStepOnSpdQuadratic) {
     const SpdQuadraticEnergy energy{A, b};
 
     NewtonOptions<double> options{};
-    options.line_search.feasibility_safety = 1.0;  // allow full Newton step
 
     pgo::math::DVec<double> z(2);
     z << 0, 0;

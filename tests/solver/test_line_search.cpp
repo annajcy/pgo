@@ -52,7 +52,6 @@ TEST(LineSearch, AcceptsFullStepForQuadraticDescent) {
     const QuadraticEnergy1D energy{};
     const AlwaysFeasible<double> feasible{};
     LineSearchOptions<double> options{};
-    options.feasibility_safety = 1.0;  // allow full step
 
     pgo::math::DVec<double> z(1);
     z[0] = 1.0;
@@ -114,7 +113,6 @@ TEST(LineSearch, FeasibilityCapsInitialAlpha) {
     const QuadraticEnergy1D energy{};
     const ToyFeasibleSet feasible{};
     LineSearchOptions<double> options{};
-    options.feasibility_safety = 1.0;  // no safety margin, use full max_step
     options.armijo_c = 1e-4;
 
     pgo::math::DVec<double> z(1);

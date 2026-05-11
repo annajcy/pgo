@@ -9,7 +9,6 @@ struct LineSearchOptions {
     T armijo_c = T{1e-4};
     T shrink = T{0.5};
     T min_step = T{1e-12};
-    T feasibility_safety = T{0.99};
 };
 
 template <typename T>

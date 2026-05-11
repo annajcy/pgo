@@ -149,7 +149,6 @@ TEST(BackwardEuler, UpdatesStateAndPreservesFixedDof) {
     const pgo::integrator::BackwardEuler<double> integrator{};
 
     pgo::solver::NewtonOptions<double> options{};
-    options.line_search.feasibility_safety = 1.0;
 
     const auto result = integrator.step(potential, mass, dof_map, state, dt, options);
 

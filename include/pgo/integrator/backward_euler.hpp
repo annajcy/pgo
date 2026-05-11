@@ -20,7 +20,8 @@ public:
                            const pgo::dof::ReducedDofMap<T>& dof_map,
                            DynamicState<T>& state,
                            const T dt,
-                           const pgo::solver::NewtonOptions<T>& options = {}) const {
+                           const pgo::solver::NewtonOptions<T>& options = {},
+                           const bool commit_on_failure = false) const {
 
         const pgo::math::DVec<T> u_old = state.u;
         const pgo::math::DVec<T> u_hat = u_old + dt * state.v;
@@ -36,8 +37,11 @@ public:
         const pgo::solver::SolverResult<T> solver_result =
             pgo::solver::solve_newton(reduced, free_u, options);
 
-        state.u = dof_map.scatter_solution(free_u);
-        state.v = (state.u - u_old) / dt;
+        const bool converged = solver_result.status == pgo::solver::SolverStatus::converged;
+        if (converged || commit_on_failure) {
+            state.u = dof_map.scatter_solution(free_u);
+            state.v = (state.u - u_old) / dt;
+        }
 
         return {solver_result.status, solver_result.iterations,
                 solver_result.final_value, solver_result.final_gradient_norm, dt};

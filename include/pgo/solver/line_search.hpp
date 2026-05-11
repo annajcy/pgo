@@ -42,7 +42,7 @@ template <typename T, typename Energy, typename FeasibleSet>
     const T current_value,
     const LineSearchOptions<T>& options) {
 
-    const T feasible_alpha = options.feasibility_safety * feasible.max_step(z, dz);
+    const T feasible_alpha = feasible.max_step(z, dz);
     const pgo::math::DVec<T> d_scaled = feasible_alpha * dz;
     const T backtrack_alpha = armijo_backtrack(energy, z, d_scaled, gradient, current_value, options);
     return feasible_alpha * backtrack_alpha;
