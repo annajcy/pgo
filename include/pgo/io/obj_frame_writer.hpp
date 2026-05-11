@@ -15,6 +15,9 @@ namespace pgo::io {
 
 template <typename T, int Dim>
 class ObjFrameWriter {
+    std::filesystem::path m_output_dir;
+    std::size_t m_next_frame = 0;
+    
 public:
     explicit ObjFrameWriter(std::filesystem::path output_dir) : m_output_dir{std::move(output_dir)} {
         static_assert(Dim > 0);
@@ -72,9 +75,6 @@ private:
         name << "frame_" << std::setw(4) << std::setfill('0') << frame << ".obj";
         return name.str();
     }
-
-    std::filesystem::path m_output_dir;
-    std::size_t m_next_frame = 0;
 };
 
 } // namespace pgo::io
