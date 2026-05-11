@@ -1286,6 +1286,16 @@ ctest --preset debug -R obj
 
 ## Phase 3: Local-Contribution Energy 和 CPU Assembly
 
+**当前状态:** 已完成。实际代码已经落地 `finite_difference.hpp`、energy concepts、local matrix aliases、CPU assembler、`MassSpringLocalEnergyModel` 和 `MassSpringLocalEnergyProvider`，并补齐 finite difference、concept、assembler、mass-spring local/global derivative 测试。plan checkbox 在本次更新中按代码现状回填。
+
+**已验证命令:**
+
+```bash
+ctest --preset debug --output-on-failure
+```
+
+结果：41/41 tests passed。Phase 3 相关测试覆盖 `finite_difference`、`EnergyConcept`、`CPUAssembler`、`MassSpringLocalEnergyModel`、`MassSpringLocalEnergyProvider`，包括 local derivative finite difference、global assembly derivative finite difference 和 shared DOF contribution 累加。
+
 **目标:** 把“局部物理公式”变成“全局可求导 sparse optimization system”。Phase 1/2 已经建立了 flat mesh、full displacement DOF、reduced DOF 和 OBJ pipeline；Phase 3 第一次引入真正的物理 energy，并让系统能够计算 full-space `E(u)`、`grad E(u)`、`H(u)`。
 
 **核心设计决策:**
@@ -1321,7 +1331,7 @@ LocalEnergyModel -> LocalEnergyProvider -> CPUAssembler -> FullEnergy quantities
 - 创建: `tests/math/test_finite_difference.cpp`
 - 修改: `tests/CMakeLists.txt`
 
-- [ ] **Step 1: 实现 `finite_difference.hpp`**
+- [x] **Step 1: 实现 `finite_difference.hpp`**
 
 提供 central difference helper，只用于测试和诊断，不进入 runtime solver：
 
@@ -1361,7 +1371,7 @@ H_col_i = (grad(x + eps e_i) - grad(x - eps e_i)) / (2 eps)
 - `eps <= 0` 时抛出 `std::runtime_error`。
 - `gradient_function` 返回 `DVec<T>` 或写入 output buffer 这两种形式二选一即可；Phase 3 推荐先实现返回 `DVec<T>` 的版本，保持测试代码简单。
 
-- [ ] **Step 2: 添加 finite difference 自测**
+- [x] **Step 2: 添加 finite difference 自测**
 
 `tests/math/test_finite_difference.cpp` 使用 `namespace pgo::math::test`。用二次函数验证 FD helper 本身：
 
@@ -1377,7 +1387,7 @@ H = [[2, 3], [3, 4]]
 - `finite_difference_hessian_from_gradient` 在同一点与解析 Hessian 匹配。
 - `eps <= 0` 抛出异常。
 
-- [ ] **Step 3: 把测试加入 `tests/CMakeLists.txt`**
+- [x] **Step 3: 把测试加入 `tests/CMakeLists.txt`**
 
 ```cmake
 add_executable(pgo_tests
@@ -1391,7 +1401,7 @@ add_executable(pgo_tests
 )
 ```
 
-- [ ] **Step 4: 运行 finite difference 测试**
+- [x] **Step 4: 运行 finite difference 测试**
 
 ```bash
 cmake --build --preset debug
@@ -1408,7 +1418,7 @@ ctest --preset debug -R finite
 - 创建: `tests/energy/test_energy_concepts.cpp`
 - 修改: `tests/CMakeLists.txt`
 
-- [ ] **Step 1: 定义 local aliases**
+- [x] **Step 1: 定义 local aliases**
 
 `include/pgo/assembly/local_matrix.hpp` 提供：
 
@@ -1429,7 +1439,7 @@ using LocalMatrix = pgo::math::DMat<T>;
 - Phase 3 的 local vector/matrix 可以使用动态 Eigen 类型。每条 spring 的 local size 是 `2 * Dim`，后续 GPU 不复用 Eigen local matrix，只复用 local contribution API 语义。
 - local aliases 属于 `assembly/`，因为它们描述 local-to-global assembly 的中间数据，不是 geometry storage。
 
-- [ ] **Step 2: 定义 `FullEnergy` concept**
+- [x] **Step 2: 定义 `FullEnergy` concept**
 
 `include/pgo/energy/energy_concepts.hpp` 提供 solver-facing full-space energy concept：
 
@@ -1458,7 +1468,7 @@ concept FullEnergy = typename T && requires(
 - `FullEnergy` 工作在 full displacement space，不知道 reduced variables。
 - `value_gradient_hessian` 是 solver 主路径：Newton 每轮通常同时需要三者。单独的 `value` / `gradient` / `hessian` 用于测试、调试和 line search。
 
-- [ ] **Step 3: 定义 `LocalEnergyModel`、`FusedLocalEnergyModel`、`LocalEnergyProvider` 和 `FusedLocalEnergyProvider` concepts**
+- [x] **Step 3: 定义 `LocalEnergyModel`、`FusedLocalEnergyModel`、`LocalEnergyProvider` 和 `FusedLocalEnergyProvider` concepts**
 
 `LocalEnergyModel` 是单个局部项公式 / material law 层，最小接口：
 
@@ -1538,7 +1548,7 @@ concept FusedLocalEnergyProvider = LocalEnergyProvider<EnergyProvider, T> && req
 - `local_value_gradient_hessian` 是 provider 的可选 performance API；assembler 优先使用 fused provider API，避免重复计算 current positions、edge vector、edge length、direction 等中间量。
 - 不要在 model/provider concepts 中出现 `assemble`、`global_gradient`、`global_hessian`、`reduced_gradient`、`boundary`、`dof_map` 等职责。
 
-- [ ] **Step 4: 添加 concept smoke tests**
+- [x] **Step 4: 添加 concept smoke tests**
 
 `tests/energy/test_energy_concepts.cpp` 使用 `namespace pgo::energy::test`。定义一个最小 toy local energy：
 
@@ -1575,7 +1585,7 @@ public:
 - `static_assert(!pgo::energy::FusedLocalEnergyProvider<ToyEdgeEnergy, double>)`。
 - local gradient/Hessian size 与 `local_dofs` size 一致。
 
-- [ ] **Step 5: 运行 energy concept 测试**
+- [x] **Step 5: 运行 energy concept 测试**
 
 ```bash
 cmake --build --preset debug
@@ -1589,7 +1599,7 @@ ctest --preset debug -R EnergyConcept
 - 创建: `tests/assembly/test_cpu_assembler.cpp`
 - 修改: `tests/CMakeLists.txt`
 
-- [ ] **Step 1: 实现 stateless assembly functions**
+- [x] **Step 1: 实现 stateless assembly functions**
 
 `include/pgo/assembly/cpu_assembler.hpp` 提供：
 
@@ -1657,7 +1667,7 @@ local_H.cols() == dofs.size()
 不满足时抛出 `std::runtime_error`。
 - 对每个 `dofs[a]` 验证 `dofs[a] < full_u.size()`，防止坏 local map 进入 sparse assembly。
 
-- [ ] **Step 2: 添加 toy assembly 测试**
+- [x] **Step 2: 添加 toy assembly 测试**
 
 `tests/assembly/test_cpu_assembler.cpp` 使用 `namespace pgo::assembly::test`。用 Task 3.2 的 `ToyEdgeEnergy` 或等价测试类型验证：
 
@@ -1672,7 +1682,7 @@ local_H.cols() == dofs.size()
 
 - `assemble_value_gradient_hessian` 在 non-fused energy 上能 fallback，结果与单独 assembly 一致。
 
-- [ ] **Step 3: 添加 shared DOF scatter 测试**
+- [x] **Step 3: 添加 shared DOF scatter 测试**
 
 构造一个 2D 三点两弹簧形状的 toy local energy，`local_dofs(0) = [0,1,2,3]`，`local_dofs(1) = [2,3,4,5]`。每个 local term 给固定 local gradient `ones(4)`。
 
@@ -1684,7 +1694,7 @@ local_H.cols() == dofs.size()
 
 这个测试确保共享 vertex 的 DOF contribution 会累加，而不是覆盖。
 
-- [ ] **Step 4: 添加 bad local energy 防御测试**
+- [x] **Step 4: 添加 bad local energy 防御测试**
 
 测试以下错误会抛出：
 
@@ -1692,7 +1702,7 @@ local_H.cols() == dofs.size()
 - `local_hessian` shape 与 `local_dofs` size 不一致。
 - `local_dofs` 返回超出 `full_u.size()` 的 full DOF index。
 
-- [ ] **Step 5: 运行 assembler 测试**
+- [x] **Step 5: 运行 assembler 测试**
 
 ```bash
 cmake --build --preset debug
@@ -1706,7 +1716,7 @@ ctest --preset debug -R CPUAssembler
 - 创建: `tests/energy/test_mass_spring_local_energy_provider.cpp`
 - 修改: `tests/CMakeLists.txt`
 
-- [ ] **Step 1: 实现 `MassSpringLocalData<T, Dim>` 和 `MassSpringLocalEnergyModel<T, Dim>`**
+- [x] **Step 1: 实现 `MassSpringLocalData<T, Dim>` 和 `MassSpringLocalEnergyModel<T, Dim>`**
 
 单条 spring 的 local energy model：
 
@@ -1755,7 +1765,7 @@ public:
 - `value` 和 `gradient` 拥有独立的实现，以避免不必要的开销，而不是直接 fallback 到 `value_gradient_hessian`。
 - 退化情况 (degenerate edge) 使用内部的 `static constexpr T kMinLength` 进行数值防护。
 
-- [ ] **Step 2: 实现 `MassSpringLocalEnergyProvider<T, Dim>`**
+- [x] **Step 2: 实现 `MassSpringLocalEnergyProvider<T, Dim>`**
 
 Provider 是 mesh/full-u/material gather 层：
 
@@ -1803,7 +1813,7 @@ Provider 实现要求：
 - 构造时遍历所有 edges，计算 rest length `L`。如果 `L <= kMinLength`，抛出 `std::runtime_error`，不要让零长度 rest spring 进入 solver。
 - provider 的 `local_value`、`local_gradient`、`local_hessian` 使用 full displacement `u` gather local displacement，然后调用 `MassSpringLocalEnergyModel` static API。
 
-- [ ] **Step 3: 明确 mass-spring 解析导数公式**
+- [x] **Step 3: 明确 mass-spring 解析导数公式**
 
 对单条 edge，令：
 
@@ -1832,7 +1842,7 @@ local_H = [  H_d, -H_d
 
 当 `r <= kMinLength` 时，能量仍按 clamped `r_safe = kMinLength` 做数值防护，gradient/Hessian 使用稳定 fallback，保证不产生 NaN。这个分支只用于避免 solver 崩溃；finite difference derivative tests 应选择远离 `r = 0` 的构型。
 
-- [ ] **Step 4: 添加 local model/provider smoke tests**
+- [x] **Step 4: 添加 local model/provider smoke tests**
 
 `tests/energy/test_mass_spring_local_energy_provider.cpp` 使用 `namespace pgo::energy::test`。测试：
 
@@ -1850,7 +1860,7 @@ local_H = [  H_d, -H_d
 - per-edge stiffness 包含负值时抛出异常。
 - 两条 spring 使用不同 stiffness 时，各自 `local_value(edge_id, full_u)` 按对应 stiffness 缩放。
 
-- [ ] **Step 5: 添加 finite-difference local derivative tests**
+- [x] **Step 5: 添加 finite-difference local derivative tests**
 
 用单条 2D spring，选择远离 singularity 的 displacement，例如：
 
@@ -1871,7 +1881,7 @@ u1 = (0.35, -0.15)
 
 测试里的 `local_u` 可以通过 helper scatter 到 full `u`，但比较对象必须是 local DOF order 对应的 local gradient/Hessian。
 
-- [ ] **Step 6: 添加 global assembly derivative tests**
+- [x] **Step 6: 添加 global assembly derivative tests**
 
 创建三点两弹簧 2D mesh，通过 `CPUAssembler` 组装 full energy/gradient/Hessian：
 
@@ -1888,7 +1898,7 @@ local -> global scatter bug
 triplet accumulation bug
 ```
 
-- [ ] **Step 7: 运行 mass-spring 和 assembler 相关测试**
+- [x] **Step 7: 运行 mass-spring 和 assembler 相关测试**
 
 ```bash
 cmake --build --preset debug
@@ -1897,16 +1907,138 @@ ctest --preset debug -R "MassSpring|CPUAssembler|finite"
 
 期望：finite difference、CPU assembler、MassSpringLocalEnergyModel / MassSpringLocalEnergyProvider 测试全部通过。
 
-## Phase 4: Reduced Energy 和 Newton Solver
+## Phase 4: Reduced Energy、Newton Solver 和 Minimal Backward Euler
 
-### Task 4.1: 添加 EnergySum 和 ReducedEnergyView
+**当前状态:** 未开始，是下一步主线。Phase 4 基于 Phase 3 已验证的 local contribution / CPU assembly，把系统推进到可求解的 reduced optimization problem，并补上 Milestone 1 最小动态 step。
+
+**Phase 4 目标:** 跑通以下 pipeline：
+
+```text
+LocalEnergyProvider
+  -> AssembledEnergy
+  -> EnergySum
+  -> ReducedEnergyView
+  -> NewtonSolver + LineSearch + AlwaysFeasible
+  -> minimal BackwardEuler step
+```
+
+**设计决策:**
+
+- `CPUAssembler` 继续保持 stateless free functions；它只计算 full-space quantities，不直接满足 `FullEnergy`。
+- `AssembledEnergy<T, Provider>` 是 local -> full 的薄 adapter：`LocalEnergyProvider + CPUAssembler -> FullEnergy`。
+- `EnergySum<T, Energies...>` 是 full -> full composer：多个 `FullEnergy` 相加后仍然是 `FullEnergy`。它不认识 `LocalEnergyProvider`，也不 include `cpu_assembler.hpp`。
+- 新增 `DifferentiableEnergy` concept 作为 solver-facing 最小接口。`FullEnergy` 是 full-space `DifferentiableEnergy`；`ReducedEnergyView` 是 reduced-space `DifferentiableEnergy`，不是 `FullEnergy`。
+- `ReducedEnergyView` 是变量代换层，不是线性系统消元层。它使用 `scatter_solution`、`restrict_vector_to_free`、`restrict_matrix_to_free`，绝不使用 `eliminate_rhs_for_dirichlet`。
+- Energy / assembly / reduced energy 全部保持 true analytic Hessian。`H + lambda I`、descent direction check、Armijo line search 属于 solver 层。
+- Feasible line search 的位置在 solver 层，但 Milestone 1 只实现 `AlwaysFeasible`。IPC/contact/CCD 的真实 feasibility 不进入 Milestone 1。
+- 引入 `integrator/` 模块，但不引入 `IntegratorBase`、runtime polymorphism、Newmark、TF-BDF2 或 adaptive timestep。Milestone 1 只实现 concrete `BackwardEuler<T>::step(...)`。
+- Backward Euler 通过普通 full-space inertia energy 接入：`step_energy = EnergySum(potential_energy, inertial_energy)`。
+
+### Task 4.1: 补齐 energy concepts 和 AssembledEnergy
+
+**文件:**
+- 修改: `include/pgo/energy/energy_concepts.hpp`
+- 创建: `include/pgo/energy/assembled_energy.hpp`
+- 修改: `tests/energy/test_energy_concepts.cpp`
+- 创建: `tests/energy/test_assembled_energy.cpp`
+- 修改: `tests/CMakeLists.txt`
+
+- [x] **Step 1: 添加 `DifferentiableEnergy` concept**
+
+`DifferentiableEnergy` 是 solver-facing contract，不承诺变量是 full displacement 还是 reduced free variables：
+
+```cpp
+namespace pgo::energy {
+
+template <typename Energy, typename T>
+concept DifferentiableEnergy =
+    requires(const Energy& energy, const pgo::math::DVec<T>& z, T& value,
+             pgo::math::DVec<T>& gradient, pgo::math::SparseMat<T>& hessian) {
+        { energy.value(z) } -> std::same_as<T>;
+        energy.gradient(z, gradient);
+        energy.hessian(z, hessian);
+        energy.value_gradient_hessian(z, value, gradient, hessian);
+    };
+
+} // namespace pgo::energy
+```
+
+- [x] **Step 2: 让 `FullEnergy` 基于 `DifferentiableEnergy`**
+
+保留 `FullEnergy` 名字，但把语义明确为 full displacement space 上的 energy contract：
+
+```cpp
+template <typename Energy, typename T>
+concept FullEnergy = DifferentiableEnergy<Energy, T>;
+```
+
+设计约束：
+
+- `FullEnergy` 用于 `AssembledEnergy`、`EnergySum`、`ReducedEnergyView` 的输入边界。
+- `NewtonSolver` 不使用 `FullEnergy` 约束；它只要求 `DifferentiableEnergy`。
+- C++ concept 无法检查 vector 维度，`FullEnergy` 和 `DifferentiableEnergy` 的区别主要是架构语义：full-space vs arbitrary optimization variable。
+
+- [x] **Step 3: 实现 `AssembledEnergy<T, Provider>`**
+
+`include/pgo/energy/assembled_energy.hpp` 提供：
+
+```cpp
+namespace pgo::energy {
+
+template <typename T, typename Provider>
+    requires LocalEnergyProvider<Provider, T>
+class AssembledEnergy {
+public:
+    explicit AssembledEnergy(const Provider& provider);
+
+    [[nodiscard]] T value(const pgo::math::DVec<T>& full_u) const;
+    void gradient(const pgo::math::DVec<T>& full_u, pgo::math::DVec<T>& full_g) const;
+    void hessian(const pgo::math::DVec<T>& full_u, pgo::math::SparseMat<T>& full_H) const;
+    void value_gradient_hessian(const pgo::math::DVec<T>& full_u, T& value,
+                                pgo::math::DVec<T>& full_g,
+                                pgo::math::SparseMat<T>& full_H) const;
+};
+
+} // namespace pgo::energy
+```
+
+实现要求：
+
+- non-owning 保存 `Provider` 指针或引用；不复制 mesh/provider/material arrays。
+- `value` 调用 `assembly::assemble_value<T>`。
+- `gradient` 调用 `assembly::assemble_gradient<T>`。
+- `hessian` 调用 `assembly::assemble_hessian<T>`。
+- `value_gradient_hessian` 调用 `assembly::assemble_value_gradient_hessian<T>`。
+- `AssembledEnergy` 是 `FullEnergy`。`CPUAssembler` 本身不变成 class、不拥有 state、不知道 solver/reduced boundary。
+
+- [x] **Step 4: 添加 concept 和 adapter 测试**
+
+测试内容：
+
+- `static_assert(pgo::energy::DifferentiableEnergy<QuadraticEnergy, double>)`。
+- `static_assert(pgo::energy::FullEnergy<QuadraticEnergy, double>)`。
+- 使用 `tests/assembly/test_cpu_assembler.cpp` 中等价的 toy provider，验证 `AssembledEnergy` 满足 `FullEnergy`。
+- 验证 `AssembledEnergy::value/gradient/hessian/value_gradient_hessian` 与直接调用 `assembly::assemble_*` 的结果一致。
+
+- [x] **Step 5: 运行测试**
+
+```bash
+cmake --build --preset debug
+ctest --preset debug -R "EnergyConcept|AssembledEnergy|CPUAssembler"
+```
+
+验证结果：`cmake --build --preset debug` 成功；`ctest --preset debug -R "EnergyConcept|AssembledEnergy|CPUAssembler" --output-on-failure` 运行 5 个测试，全部通过；`ctest --preset debug --output-on-failure` 运行 42 个测试，全部通过。
+
+### Task 4.2: 添加 EnergySum 和 ReducedEnergyView
 
 **文件:**
 - 创建: `include/pgo/energy/energy_sum.hpp`
 - 创建: `include/pgo/energy/reduced_energy.hpp`
-- 修改: `tests/solver/test_solver.cpp`
+- 创建: `tests/energy/test_energy_sum.cpp`
+- 创建: `tests/energy/test_reduced_energy.cpp`
+- 修改: `tests/CMakeLists.txt`
 
-- [ ] **Step 1: 实现 `EnergySum<T>`**
+- [ ] **Step 1: 实现 tuple-based `EnergySum<T, Energies...>`**
 
 组合多个 full-space energies：
 
@@ -1914,7 +2046,54 @@ ctest --preset debug -R "MassSpring|CPUAssembler|finite"
 - gradient 相加。
 - Hessian 相加。
 
-- [ ] **Step 2: 实现 `ReducedEnergyView<T, Energy>`**
+推荐 API：
+
+```cpp
+namespace pgo::energy {
+
+template <typename T, typename... Energies>
+    requires(FullEnergy<Energies, T> && ...)
+class EnergySum {
+public:
+    explicit EnergySum(const Energies&... energies);
+
+    [[nodiscard]] T value(const pgo::math::DVec<T>& full_u) const;
+    void gradient(const pgo::math::DVec<T>& full_u, pgo::math::DVec<T>& full_g) const;
+    void hessian(const pgo::math::DVec<T>& full_u, pgo::math::SparseMat<T>& full_H) const;
+    void value_gradient_hessian(const pgo::math::DVec<T>& full_u, T& value,
+                                pgo::math::DVec<T>& full_g,
+                                pgo::math::SparseMat<T>& full_H) const;
+};
+
+} // namespace pgo::energy
+```
+
+实现要求：
+
+- non-owning 保存 input energies 的指针/reference tuple。
+- `EnergySum` 的输入必须已经是 `FullEnergy`；不要 special-case `AssembledEnergy` 或 `LocalEnergyProvider`。
+- gradient 先 resize 到 input gradient size 并置零，再累加每个 energy 的 gradient。
+- Hessian 可以先让每个 energy 输出 sparse matrix，然后相加。Milestone 1 接受 sparse temporary 开销。
+- `value_gradient_hessian` 优先每个子 energy 调用 fused API，累加 value / gradient / Hessian。
+- 空 `EnergySum` 暂不支持；如果 `Energies...` 为空应在 compile-time 或 constructor 中拒绝。
+
+- [ ] **Step 2: 添加 `EnergySum` 测试**
+
+使用两个 quadratic full energies：
+
+```text
+E_i(u) = 0.5 * u^T A_i u - b_i^T u + c_i
+```
+
+验证：
+
+- `EnergySum::value == value_0 + value_1`。
+- `EnergySum::gradient == gradient_0 + gradient_1`。
+- `EnergySum::hessian == hessian_0 + hessian_1`。
+- `EnergySum::value_gradient_hessian` 与单独接口一致。
+- `static_assert(pgo::energy::FullEnergy<EnergySum<...>, double>)`。
+
+- [ ] **Step 3: 实现 `ReducedEnergyView<T, Energy>`**
 
 职责：
 
@@ -1950,7 +2129,45 @@ H_red = P^T H_full(P y + G g) P
 
 重要约束：`eliminate_rhs_for_dirichlet(full_rhs, full_matrix)` 只用于直接线性系统 `A u = b` 的 RHS 消元，不用于 reduced energy gradient。energy gradient 已经在 `full_u = P y + G g` 上 evaluate 过，prescribed displacement 的影响已经包含在 `full_gradient` 中。
 
-- [ ] **Step 3: 添加 reduced energy 测试**
+推荐 API：
+
+```cpp
+namespace pgo::energy {
+
+template <typename T, typename Energy>
+    requires FullEnergy<Energy, T>
+class ReducedEnergyView {
+public:
+    ReducedEnergyView(const Energy& full_energy,
+                      const pgo::dof::ReducedDofMap<T>& dof_map);
+
+    [[nodiscard]] std::size_t full_dofs() const;
+    [[nodiscard]] std::size_t free_dofs() const;
+
+    [[nodiscard]] T value(const pgo::math::DVec<T>& free_u) const;
+    void gradient(const pgo::math::DVec<T>& free_u, pgo::math::DVec<T>& reduced_g) const;
+    void hessian(const pgo::math::DVec<T>& free_u, pgo::math::SparseMat<T>& reduced_H) const;
+    void value_gradient_hessian(const pgo::math::DVec<T>& free_u, T& value,
+                                pgo::math::DVec<T>& reduced_g,
+                                pgo::math::SparseMat<T>& reduced_H) const;
+
+    [[nodiscard]] pgo::math::DVec<T> scatter_solution(const pgo::math::DVec<T>& free_u) const;
+    [[nodiscard]] pgo::math::DVec<T> scatter_direction(const pgo::math::DVec<T>& free_du) const;
+};
+
+} // namespace pgo::energy
+```
+
+实现要求：
+
+- non-owning 保存 full energy 和 `ReducedDofMap`。
+- 不缓存 `full_u`、`full_gradient`、`full_hessian`；Milestone 1 优先简单和线程语义清晰。
+- `value(free_u)` 必须先 `scatter_solution(free_u)`，不能要求调用者传 full `u`。
+- `gradient/hessian/value_gradient_hessian` 只做 `P^T` / `P^T H P` projection。
+- `scatter_solution` / `scatter_direction` 是 convenience API，直接转发 dof map，方便 solver debug 和 example 输出。
+- `ReducedEnergyView` 满足 `DifferentiableEnergy`，但不要把它当作 `FullEnergy`。
+
+- [ ] **Step 4: 添加 reduced energy 测试**
 
 使用 quadratic energy：
 
@@ -1967,18 +2184,29 @@ restrict_matrix_to_free(full_hessian)
 
 测试必须覆盖非零 prescribed displacement，用于防止错误地把 `eliminate_rhs_for_dirichlet(full_gradient, full_hessian)` 当成 reduced gradient projection。
 
-- [ ] **Step 4: 运行测试**
+额外测试：
+
+- `ReducedEnergyView::value(free_u) == full_energy.value(dof_map.scatter_solution(free_u))`。
+- `ReducedEnergyView::scatter_solution(free_u)` 与 dof map 结果一致。
+- `ReducedEnergyView::scatter_direction(free_du)` 的 fixed DOF 为 0。
+- `static_assert(pgo::energy::DifferentiableEnergy<ReducedEnergyView<...>, double>)`。
+
+- [ ] **Step 5: 运行测试**
 
 ```bash
 cmake --build --preset debug
-ctest --preset debug -R solver
+ctest --preset debug -R "EnergySum|ReducedEnergy|solver"
 ```
 
-### Task 4.2: 添加 line search 和 solver result
+### Task 4.3: 添加 solver result、options、feasible set 和 Armijo line search
 
 **文件:**
 - 创建: `include/pgo/solver/solver_result.hpp`
+- 创建: `include/pgo/solver/solver_options.hpp`
+- 创建: `include/pgo/solver/feasible_set.hpp`
 - 创建: `include/pgo/solver/line_search.hpp`
+- 创建: `tests/solver/test_line_search.cpp`
+- 修改: `tests/CMakeLists.txt`
 
 - [ ] **Step 1: 定义 `SolverResult<T>`**
 
@@ -1990,48 +2218,377 @@ ctest --preset debug -R solver
 - `T final_gradient_norm`
 - `std::string message`
 
-- [ ] **Step 2: 实现 Armijo backtracking line search**
+- [ ] **Step 2: 定义 `NewtonOptions<T>` 和 `LineSearchOptions<T>`**
+
+`include/pgo/solver/solver_options.hpp` 提供：
+
+```cpp
+namespace pgo::solver {
+
+template <typename T>
+struct LineSearchOptions {
+    T armijo_c = T{1e-4};
+    T shrink = T{0.5};
+    T min_step = T{1e-12};
+    T feasibility_safety = T{0.99};
+};
+
+template <typename T>
+struct NewtonOptions {
+    std::size_t max_iterations = 50;
+    T gradient_tolerance = T{1e-8};
+    T initial_regularization = T{0};
+    T min_regularization = T{1e-12};
+    T regularization_growth = T{10};
+    T max_regularization = T{1e8};
+    LineSearchOptions<T> line_search;
+};
+
+} // namespace pgo::solver
+```
+
+- [ ] **Step 3: 定义 `AlwaysFeasible<T>` 和 feasible-set concept**
+
+`include/pgo/solver/feasible_set.hpp` 提供：
+
+```cpp
+namespace pgo::solver {
+
+template <typename FeasibleSet, typename T>
+concept FeasibleSetLike = requires(const FeasibleSet& feasible,
+                                   const pgo::math::DVec<T>& z,
+                                   const pgo::math::DVec<T>& dz) {
+    { feasible.is_feasible(z) } -> std::same_as<bool>;
+    { feasible.max_step(z, dz) } -> std::same_as<T>;
+};
+
+template <typename T>
+struct AlwaysFeasible {
+    [[nodiscard]] bool is_feasible(const pgo::math::DVec<T>&) const;
+    [[nodiscard]] T max_step(const pgo::math::DVec<T>&,
+                             const pgo::math::DVec<T>&) const;
+};
+
+} // namespace pgo::solver
+```
+
+Milestone 1 只实现 `AlwaysFeasible`。`ReducedFeasibleSet`、IPC/CCD feasibility、barrier domain check 留到后续 milestone。
+
+- [ ] **Step 4: 实现 feasible Armijo backtracking line search**
 
 输入：
 
 - energy
-- current `u`
-- direction `du`
+- feasible set
+- current optimization variable `z`
+- direction `dz`
 - gradient `g`
+- current value
+- line-search options
 
-输出 accepted step size。
+输出 accepted step size。推荐 API：
 
+```cpp
+template <typename T, typename Energy, typename FeasibleSet>
+    requires pgo::energy::DifferentiableEnergy<Energy, T> &&
+             FeasibleSetLike<FeasibleSet, T>
+[[nodiscard]] T feasible_armijo_line_search(
+    const Energy& energy,
+    const FeasibleSet& feasible,
+    const pgo::math::DVec<T>& z,
+    const pgo::math::DVec<T>& dz,
+    const pgo::math::DVec<T>& gradient,
+    T current_value,
+    const LineSearchOptions<T>& options);
+```
 
-### Task 4.3: 添加 damped Newton solver
+实现语义：
+
+```text
+alpha = min(1, feasibility_safety * feasible.max_step(z, dz))
+while alpha >= min_step:
+  trial = z + alpha * dz
+  if !feasible.is_feasible(trial):
+    alpha *= shrink
+    continue
+  if energy.value(trial) <= current_value + armijo_c * alpha * gradient.dot(dz):
+    return alpha
+  alpha *= shrink
+return 0
+```
+
+设计约束：
+
+- Dirichlet feasibility 已经由 `ReducedEnergyView` 的 reduced variables 保证，不需要 line search 额外检查。
+- Line search 不修改 Hessian，不负责 PSD projection。
+- 如果 `gradient.dot(dz) >= 0`，调用者应该先拒绝 direction；line search 可以 assert/require descent 或返回 0。
+
+- [ ] **Step 5: 添加 line search 测试**
+
+测试内容：
+
+- 对一维 quadratic，descent direction 接受 `alpha = 1`。
+- 非充分下降时会 backtrack。
+- `AlwaysFeasible::max_step == 1` 且 `is_feasible == true`。
+- 构造一个 toy feasible set，其 `max_step` 返回 `0.25`，验证初始 alpha 被 feasibility cap 限制。
+
+- [ ] **Step 6: 运行测试**
+
+```bash
+cmake --build --preset debug
+ctest --preset debug -R "LineSearch|solver"
+```
+
+### Task 4.4: 添加 damped Newton solver
 
 **文件:**
 - 创建: `include/pgo/solver/newton_solver.hpp`
 - 修改: `tests/solver/test_solver.cpp`
+- 修改: `tests/CMakeLists.txt`
 
 - [ ] **Step 1: 实现 Newton solver**
 
 行为：
 
-- 输入 free-space energy 和 initial `free_u`。
+- 输入 generic `DifferentiableEnergy` 和 initial optimization variable `z`；在 reduced problem 中这个 `z` 就是 `free_u`。
 - 每轮计算 value、gradient、Hessian。
 - 解 `(H + lambda I) du = -g`，使用 Eigen `SimplicialLDLT`。
 - factorization 失败或 direction 不是 descent 时增加 diagonal regularization。
-- 使用 Armijo line search。
+- 使用 feasible Armijo line search；默认 feasible set 是 `AlwaysFeasible<T>`。
 - gradient norm 小于 tolerance 或达到 max iterations 时停止。
+
+推荐 API：
+
+```cpp
+namespace pgo::solver {
+
+template <typename T, typename Energy>
+    requires pgo::energy::DifferentiableEnergy<Energy, T>
+SolverResult<T> solve_newton(const Energy& energy,
+                             pgo::math::DVec<T>& z,
+                             const NewtonOptions<T>& options = {});
+
+template <typename T, typename Energy, typename FeasibleSet>
+    requires pgo::energy::DifferentiableEnergy<Energy, T> &&
+             FeasibleSetLike<FeasibleSet, T>
+SolverResult<T> solve_newton(const Energy& energy,
+                             const FeasibleSet& feasible,
+                             pgo::math::DVec<T>& z,
+                             const NewtonOptions<T>& options = {});
+
+} // namespace pgo::solver
+```
+
+实现细节：
+
+- 每次迭代先调用 `energy.value_gradient_hessian(z, value, g, H)`。
+- 若 `||g|| <= gradient_tolerance`，返回 converged。
+- 对每轮 Newton system，尝试 `lambda = initial_regularization`；当 `lambda == 0` 失败时下一次使用 `min_regularization`。
+- 构造 `H_mod = H + lambda I`。Milestone 1 只做 diagonal shift，不实现完整 modified Cholesky 或 PSD projection policy。
+- `SimplicialLDLT` factorization 或 solve 失败时增大 `lambda`。
+- 如果 `du` 有 NaN/Inf，或 `g.dot(du) >= 0`，增大 `lambda`。
+- 找到 descent direction 后调用 `feasible_armijo_line_search`。
+- line search 返回 0 或低于 `min_step` 时返回 failure message。
+- 成功接受 step 后执行 `z += alpha * du`。
 
 - [ ] **Step 2: 添加 quadratic convergence 测试**
 
 使用 positive definite quadratic energy，验证 Newton 收敛到解析 minimizer。
 
-- [ ] **Step 3: 添加 mass-spring smoke test**
+- [ ] **Step 3: 添加 diagonal regularization 测试**
+
+使用一个 Hessian 在初始点不可直接给出 descent direction 的 toy differentiable energy，验证 solver 会增加 `lambda` 并最终下降。
+
+要求：
+
+- energy 层返回 true Hessian。
+- 测试只检查 solver 能得到下降并收敛到合理点；不要要求 energy Hessian PSD。
+
+- [ ] **Step 4: 添加 reduced mass-spring smoke test**
 
 创建三点 chain，固定 vertex 0，对末端施加简单 external force energy，求解 reduced energy，验证末端 displacement 朝 force 方向。
 
-- [ ] **Step 4: 运行测试**
+为了避免 2D chain 的自由转动/零模导致 `SimplicialLDLT` 不稳定，测试建议：
+
+- 使用 1D chain；或
+- 使用 2D chain 但固定所有 y 分量，只允许 x 方向自由。
+
+测试 pipeline：
+
+```text
+MassSpringLocalEnergyProvider
+  -> AssembledEnergy
+  -> ExternalForceEnergy / Quadratic test energy
+  -> EnergySum
+  -> ReducedEnergyView
+  -> solve_newton
+```
+
+- [ ] **Step 5: 运行测试**
 
 ```bash
 cmake --build --preset debug
 ctest --preset debug -R solver
+```
+
+### Task 4.5: 添加 minimal inertia energy 和 BackwardEuler integrator
+
+**文件:**
+- 创建: `include/pgo/energy/inertial_energy.hpp`
+- 创建: `include/pgo/integrator/dynamic_state.hpp`
+- 创建: `include/pgo/integrator/time_step_result.hpp`
+- 创建: `include/pgo/integrator/backward_euler.hpp`
+- 创建: `tests/integrator/test_backward_euler.cpp`
+- 修改: `tests/CMakeLists.txt`
+
+- [ ] **Step 1: 实现 `DynamicState<T>` 和 `TimeStepResult<T>`**
+
+`include/pgo/integrator/dynamic_state.hpp`:
+
+```cpp
+namespace pgo::integrator {
+
+template <typename T>
+struct DynamicState {
+    pgo::math::DVec<T> u;
+    pgo::math::DVec<T> v;
+    pgo::math::DVec<T> a;
+};
+
+} // namespace pgo::integrator
+```
+
+`a` 在 Milestone 1 的 Backward Euler 中可以不使用，但保留给 Newmark。
+
+`include/pgo/integrator/time_step_result.hpp`:
+
+```cpp
+namespace pgo::integrator {
+
+template <typename T>
+struct TimeStepResult {
+    bool converged = false;
+    std::size_t solver_iterations = 0;
+    T final_value{};
+    T final_gradient_norm{};
+    T dt{};
+    std::string message;
+};
+
+} // namespace pgo::integrator
+```
+
+- [ ] **Step 2: 实现 `LumpedInertialEnergy<T>`**
+
+`include/pgo/energy/inertial_energy.hpp` 提供 full-space inertia energy：
+
+```text
+E_inertia(u) = 0.5 / (dt * dt) * sum_i mass_i * (u_i - u_hat_i)^2
+gradient_i = mass_i * (u_i - u_hat_i) / (dt * dt)
+H_ii = mass_i / (dt * dt)
+```
+
+推荐 API：
+
+```cpp
+namespace pgo::energy {
+
+template <typename T>
+class LumpedInertialEnergy {
+public:
+    LumpedInertialEnergy(const pgo::math::DVec<T>& lumped_mass,
+                         const pgo::math::DVec<T>& u_hat,
+                         T dt);
+
+    [[nodiscard]] T value(const pgo::math::DVec<T>& full_u) const;
+    void gradient(const pgo::math::DVec<T>& full_u, pgo::math::DVec<T>& full_g) const;
+    void hessian(const pgo::math::DVec<T>& full_u, pgo::math::SparseMat<T>& full_H) const;
+    void value_gradient_hessian(const pgo::math::DVec<T>& full_u, T& value,
+                                pgo::math::DVec<T>& full_g,
+                                pgo::math::SparseMat<T>& full_H) const;
+};
+
+} // namespace pgo::energy
+```
+
+实现要求：
+
+- `lumped_mass.size() == u_hat.size()`。
+- `full_u.size() == u_hat.size()`。
+- `dt > 0`。
+- mass 不能为负。零 mass 暂时允许，但可能导致 singular system；测试应使用正 mass。
+- `LumpedInertialEnergy` 满足 `FullEnergy`。
+
+- [ ] **Step 3: 实现 concrete `BackwardEuler<T>`**
+
+`include/pgo/integrator/backward_euler.hpp` 提供：
+
+```cpp
+namespace pgo::integrator {
+
+template <typename T>
+class BackwardEuler {
+public:
+    template <typename PotentialEnergy>
+        requires pgo::energy::FullEnergy<PotentialEnergy, T>
+    TimeStepResult<T> step(const PotentialEnergy& potential_energy,
+                           const pgo::math::DVec<T>& lumped_mass,
+                           const pgo::dof::ReducedDofMap<T>& dof_map,
+                           DynamicState<T>& state,
+                           T dt,
+                           const pgo::solver::NewtonOptions<T>& options = {}) const;
+};
+
+} // namespace pgo::integrator
+```
+
+内部流程：
+
+```text
+u_old = state.u
+u_hat = state.u + dt * state.v
+inertia_energy = LumpedInertialEnergy(lumped_mass, u_hat, dt)
+step_energy = EnergySum(potential_energy, inertia_energy)
+reduced_energy = ReducedEnergyView(step_energy, dof_map)
+free_u = dof_map.restrict_vector_to_free(state.u)
+solver_result = solve_newton(reduced_energy, AlwaysFeasible, free_u, options)
+u_next = dof_map.scatter_solution(free_u)
+v_next = (u_next - u_old) / dt
+state.u = u_next
+state.v = v_next
+return TimeStepResult copied from solver_result
+```
+
+设计约束：
+
+- 不引入 `IntegratorBase`、`TimeIntegrator` concept、runtime polymorphism 或 solver policy。
+- `BackwardEuler` 是 orchestration layer：构造 step energy、调用 solver、commit state。
+- Integrator 不实现 line search，不处理 Hessian regularization，不知道 local provider。
+
+- [ ] **Step 4: 添加 inertia energy 测试**
+
+测试：
+
+- `LumpedInertialEnergy` value / gradient / Hessian 与手算结果一致。
+- `value_gradient_hessian` 与单独接口一致。
+- `static_assert(pgo::energy::FullEnergy<LumpedInertialEnergy<double>, double>)`。
+
+- [ ] **Step 5: 添加 Backward Euler smoke test**
+
+使用单自由度或小 chain：
+
+- 构造 `DynamicState`，`u = 0`，`v = 0`。
+- potential energy 使用简单 external force / quadratic energy。
+- 设置正 lumped mass 和 `dt`。
+- 固定部分 DOF，验证 fixed DOF 在 step 后仍为 prescribed value。
+- 验证自由 DOF 朝 external force 方向更新。
+- 验证 `state.v == (state.u_new - state.u_old) / dt`。
+
+- [ ] **Step 6: 运行测试**
+
+```bash
+cmake --build --preset debug
+ctest --preset debug -R "Inertial|BackwardEuler|solver"
 ```
 
 ## Phase 5: Example Simulation 和 OBJ Frame Pipeline
@@ -2073,6 +2630,7 @@ target_link_libraries(pgo_mass_spring_cloth PRIVATE pgo::core CLI11::CLI11)
 --frames 40
 --stiffness 100
 --gravity 9.8
+--dt 0.016
 ```
 
 执行流程：
@@ -2081,7 +2639,7 @@ target_link_libraries(pgo_mass_spring_cloth PRIVATE pgo::core CLI11::CLI11)
 - 从 `mesh.edge_indices()` / `mesh.edge_vertex()` 构造 mass-spring energy。
 - 固定 top-row vertices 的 displacement DOFs 为 0。
 - 每一帧将 gravity 从 0 ramp 到目标值。
-- 求解 quasi-static equilibrium。
+- 使用 Phase 4 的 `BackwardEuler<T>::step(...)` 求解一个动态 timestep。
 - 使用 `ObjFrameWriter` 写出 OBJ frame。
 
 - [ ] **Step 2: 构建并运行 example**

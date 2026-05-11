@@ -10,14 +10,17 @@
 namespace pgo::energy {
 
 template <typename Energy, typename T>
-concept FullEnergy =
-    requires(const Energy& energy, const pgo::math::DVec<T>& u, T& value,
-                                         pgo::math::DVec<T>& gradient, pgo::math::SparseMat<T>& hessian) {
-        { energy.value(u) } -> std::same_as<T>;
-        energy.gradient(u, gradient);
-        energy.hessian(u, hessian);
-        energy.value_gradient_hessian(u, value, gradient, hessian);
+concept DifferentiableEnergy =
+    requires(const Energy& energy, const pgo::math::DVec<T>& z, T& value,
+             pgo::math::DVec<T>& gradient, pgo::math::SparseMat<T>& hessian) {
+        { energy.value(z) } -> std::same_as<T>;
+        energy.gradient(z, gradient);
+        energy.hessian(z, hessian);
+        energy.value_gradient_hessian(z, value, gradient, hessian);
     };
+
+template <typename Energy, typename T>
+concept FullEnergy = DifferentiableEnergy<Energy, T>;
 
 template <typename Model, typename T, typename LocalData>
 concept LocalEnergyModel =
