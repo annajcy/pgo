@@ -6,7 +6,7 @@
 
 **架构:** 内部核心是现代 C++23 template/header-only library；对外二进制接口是 compiled C99 ABI dynamic library。CPU 实现优先，但数据布局和 energy interface 从第一天就为 Milestone 2 的 Vulkan/Slang GPU backend 留好边界：flat storage、显式 `X + u`、local contribution API、独立 assembly 层、geometry/storage 不持有 Eigen object。
 
-**技术栈:** C++23、C99 ABI、CMake Presets、Conan 2、Eigen、GoogleTest、CLI11、Alembic、clang-format、GitHub Actions。
+**技术栈:** C++23、C99 ABI、CMake Presets、Conan 2、Eigen、GoogleTest、CLI11、tinyobjloader、Alembic、clang-format、GitHub Actions。
 
 ---
 
@@ -22,6 +22,11 @@
 - 不引入 `fmt` 第三方依赖；需要格式化字符串时使用标准库 `<format>` / `std::format`。核心库应尽量少做格式化，C API 错误消息用固定 buffer 写入。
 - Energy model 必须暴露 local contribution API，使 CPU assembly 和未来 GPU kernel 能共享同一语义边界。
 - Milestone 1 只实现 CPU assembly、CPU Newton solver、OBJ input/output、C99 ABI facade。
+- Milestone 1 OBJ loading 是 compiled IO adapter，不属于 header-oriented simulation core。`pgo::io` 私有使用 tinyobjloader，公开只承诺 `read_obj_rest_mesh_3d(path) -> RestMesh<double, 3>`。
+- `RestMesh<T, Dim>` 仍然是项目自己的 flat storage；tinyobjloader types、materials、normals、UVs、shape/group metadata 不得越过 `pgo::io` 边界。
+- Milestone 1 IO 层整体只承诺 double precision 3D OBJ：`read_obj_rest_mesh_3d(...)` 和 `ObjFrameWriter3d`。2D 测试直接构造 `RestMesh<T, 2>`，不通过 OBJ IO。
+- Phase 5 是 application pipeline validation：不新增 `SimulationWorld`、`Scene`、`IntegratorBase`、runtime energy registry、material system、bending/collision/contact/GPU path。
+- 不引入 `spdlog` 或泛泛的 `utils/logger.hpp`。core 返回 programmatic status；examples/tools 用 `std::cerr` + `<format>` 打印，最多加小型 `solver::status_name(...)` helper。
 - C++ template、STL、Eigen、异常、allocator 内部细节不能越过 C ABI 边界。
 - C API 只暴露 `extern "C"`、opaque handles、POD descriptors、pointer/count arrays、status code、explicit destroy/copy functions。
 - C bridge 的 `.cpp` 内部可以使用现代 C++、STL、RAII、Eigen，但所有 exported C function 必须 catch exceptions 并转换为 `pgo_status_t` + `pgo_error_t`。
@@ -63,8 +68,10 @@
         dof_layout.hpp
         reduced_dof_map.hpp
       energy/
+        constant_force_energy.hpp
         energy_concepts.hpp
         energy_sum.hpp
+        inertial_energy.hpp
         mass_spring_local_energy_provider.hpp
         reduced_energy.hpp
       geometry/
@@ -82,6 +89,7 @@
         line_search.hpp
         newton_solver.hpp
         solver_result.hpp
+        status_name.hpp
       storage/
         array_view.hpp
         host_buffer.hpp
@@ -89,6 +97,9 @@
       export.h
       pgo.h
   src/
+    io/
+      CMakeLists.txt
+      obj_reader.cpp
     c_api/
       CMakeLists.txt
       pgo_c.cpp
@@ -106,6 +117,7 @@
     dof/
       test_dof.cpp
     energy/
+      test_constant_force_energy.cpp
       test_energy_concepts.cpp
       test_mass_spring_local_energy_provider.cpp
     geometry/
@@ -205,6 +217,7 @@ class PgoRecipe(ConanFile):
     def requirements(self):
         self.requires("eigen/3.4.0")
         self.requires("cli11/[>=2.4 <3]")
+        self.requires("tinyobjloader/[>=2.0 <3]")
 
     def build_requirements(self):
         self.test_requires("gtest/[>=1.14 <2]")
@@ -300,6 +313,10 @@ target_include_directories(pgo_core INTERFACE
 target_link_libraries(pgo_core INTERFACE Eigen3::Eigen)
 target_link_libraries(pgo_core INTERFACE pgo_project_warnings pgo_project_sanitizers)
 
+if(EXISTS "${PROJECT_SOURCE_DIR}/src/io/CMakeLists.txt")
+    add_subdirectory(src/io)
+endif()
+
 if(PGO_BUILD_C_API AND EXISTS "${PROJECT_SOURCE_DIR}/src/c_api/CMakeLists.txt")
     add_subdirectory(src/c_api)
 endif()
@@ -329,6 +346,8 @@ option(PGO_ENABLE_GPU "Enable GPU backend targets" OFF)
 
 ```cmake
 find_package(Eigen3 REQUIRED CONFIG)
+find_package(tinyobjloader REQUIRED CONFIG)
+
 if(PGO_BUILD_EXAMPLES)
     find_package(CLI11 REQUIRED CONFIG)
 endif()
@@ -1216,15 +1235,15 @@ ctest --preset debug -R dof
 
 ## Phase 2: OBJ Mesh 输入和 OBJ Frame 输出
 
-### Task 2.1: 添加 OBJ reader
+### Task 2.1: 添加 OBJ reader（legacy header-only reader 已完成，Phase 5 前迁移）
 
 **文件:**
 - 创建: `include/pgo/io/obj_reader.hpp`
 - 修改: `tests/io/test_obj_io.cpp`
 
-- [x] **Step 1: 实现 `read_obj_rest_mesh<T, Dim>(path)`**
+- [x] **Step 1: 实现 legacy `read_obj_rest_mesh<T, Dim>(path)`**
 
-支持：
+当前已完成版本支持：
 
 - `v x y z`
 - `l i j`
@@ -1232,13 +1251,88 @@ ctest --preset debug -R dof
 - `f` 中的 `i/j/k` 或 `i//k` token，只读取第一个 vertex index
 - OBJ positive one-based indices
 
-要求：
+当前已完成版本要求：
 
 - Faces 自动抽取 undirected unique edges，并写入 flat `edge_indices`。
 - OBJ `l` records 也写入 flat `edge_indices`。
 - Triangular faces 写入 flat `face_indices`。
 - 读取为 `RestMesh<T, Dim>`。
 - `Dim == 2` 时丢弃 OBJ z 坐标。
+
+Phase 5 前需要把 reader 边界收紧为 compiled IO adapter：
+
+- [ ] **Step 1b: 新增 compiled `pgo::io` target**
+
+**文件:**
+- 创建: `src/io/CMakeLists.txt`
+- 创建: `src/io/obj_reader.cpp`
+- 修改: `CMakeLists.txt`
+- 修改: `cmake/pgo_dependencies.cmake`
+- 修改: `conanfile.py`
+
+目标 CMake 形状：
+
+```cmake
+add_library(pgo_io STATIC
+    obj_reader.cpp
+)
+add_library(pgo::io ALIAS pgo_io)
+
+target_compile_features(pgo_io PUBLIC cxx_std_23)
+target_link_libraries(pgo_io
+    PUBLIC pgo::core
+    PRIVATE tinyobjloader::tinyobjloader
+)
+```
+
+依赖边界：
+
+- `pgo::core` 不链接 tinyobjloader。
+- `examples` 和 `tests/io` 需要 OBJ reader 时链接 `pgo::io`。
+- tinyobjloader 的 include 和 implementation 只出现在 `src/io/obj_reader.cpp`。
+
+- [ ] **Step 1c: 将 public reader API 改为 3D double 专用**
+
+`include/pgo/io/obj_reader.hpp` 暴露：
+
+```cpp
+namespace pgo::io {
+
+[[nodiscard]] pgo::geometry::RestMesh<double, 3>
+read_obj_rest_mesh_3d(const std::filesystem::path& path);
+
+} // namespace pgo::io
+```
+
+设计约束：
+
+- 不再承诺 `read_obj_rest_mesh<T, Dim>` 泛型 OBJ input。
+- core math / energy / solver 继续支持 `<T, Dim>`。
+- Milestone 1 OBJ IO 只支持 `RestMesh<double, 3>`。
+- 2D 单元测试直接构造 `RestMesh<T, 2>`，不要依赖 OBJ reader。
+- 旧手写 parser 只作为迁移过渡存在；`read_obj_rest_mesh_3d`、example 和 tests 全部接到 tinyobjloader adapter 后，删除旧的 `read_obj_rest_mesh<T, Dim>` 实现，避免两个 OBJ reader 语义源头并存。
+
+- [ ] **Step 1d: tinyobjloader 加载策略**
+
+`src/io/obj_reader.cpp` 使用：
+
+```cpp
+#define TINYOBJLOADER_USE_DOUBLE
+#define TINYOBJLOADER_IMPLEMENTATION
+#include <tiny_obj_loader.h>
+```
+
+要求：
+
+- 以 double precision 读取 OBJ positions。
+- 启用 triangulation。
+- 只消费 vertex positions 和 polygon topology。
+- 忽略 normals、UVs、materials、smoothing groups、object/group names。
+- 输出 faces 全部为 triangles。
+- 从 triangulated faces 提取 unique undirected edges。
+- 使用 deterministic edge order（例如 `std::set<std::pair<VertexIndex, VertexIndex>>`），不要用 `unordered_set` 让测试和 debug 输出漂移。
+- 校验 vertex index 非负、落在 vertex count 范围内，并能放入 `pgo::geometry::VertexIndex`。
+- 遇到 degenerate face 或 degenerate edge 时直接 throw，避免 mass-spring provider 后面才遇到 zero rest length。
 
 - [x] **Step 2: 添加测试**
 
@@ -1250,6 +1344,15 @@ ctest --preset debug -R dof
 - `face_indices().size() == 6`
 - `edge_indices().size() == 10`
 
+Phase 5 前补充 tinyobjloader adapter 测试：
+
+- [ ] 读取包含 quad face / `vt` / `vn` / material token 的 OBJ，验证 triangulation 后输出 triangles。
+- [ ] 验证 edge extraction deterministic。
+- [ ] 验证 degenerate face / out-of-range index 抛出异常。
+- [ ] 验证 public API 只测试 `read_obj_rest_mesh_3d`，不再暗示 float 或 Dim=2 reader 可用。
+- [ ] 确认 repo 中没有 call site 继续调用 legacy `read_obj_rest_mesh<T, Dim>`。
+- [ ] 删除 legacy 手写 OBJ parser，只保留 tinyobjloader-backed `read_obj_rest_mesh_3d`。
+
 - [x] **Step 3: 运行测试**
 
 ```bash
@@ -1257,15 +1360,15 @@ cmake --build --preset debug
 ctest --preset debug -R obj
 ```
 
-### Task 2.2: 添加 OBJ frame writer
+### Task 2.2: 添加 3D OBJ frame writer
 
 **文件:**
 - 创建: `include/pgo/io/obj_frame_writer.hpp`
 - 修改: `tests/io/test_obj_io.cpp`
 
-- [x] **Step 1: 实现 `ObjFrameWriter<T, Dim>`**
+- [x] **Step 1: 实现 legacy `ObjFrameWriter<T, Dim>`**
 
-职责：
+当前已完成版本职责：
 
 - 输入 `RestMesh<T, Dim>` 和 full displacement vector `u`。
 - 输出 `frame_0000.obj`、`frame_0001.obj` 等。
@@ -1273,9 +1376,42 @@ ctest --preset debug -R obj
 - 通过 `face_indices` 保留原 faces。
 - 如果 mesh 没有 faces，则通过 `edge_indices` 写 `l` records。
 
-- [x] **Step 2: 添加 writer 测试**
+Phase 5 前将 public writer API 收紧为 double + 3D：
+
+- [ ] **Step 1b: 将 writer API 改为 `ObjFrameWriter3d`**
+
+`include/pgo/io/obj_frame_writer.hpp` 暴露：
+
+```cpp
+namespace pgo::io {
+
+class ObjFrameWriter3d {
+public:
+    void write_frame(const pgo::geometry::RestMesh<double, 3>& mesh,
+                     const pgo::math::DVec<double>& u,
+                     std::size_t frame_index);
+};
+
+} // namespace pgo::io
+```
+
+设计约束：
+
+- Milestone 1 不承诺 2D OBJ output。
+- Writer 输入只接受 `RestMesh<double, 3>` 和 full displacement vector。
+- 写出的 vertex position 是 `X + u`。
+- 通过 `face_indices` 保留 triangular faces；如果 mesh 没有 faces，可以继续通过 `edge_indices` 写 `l` records。
+- 旧模板 writer 只作为迁移过渡存在；example/tests 全部改到 `ObjFrameWriter3d` 后删除 `ObjFrameWriter<T, Dim>`。
+
+- [x] **Step 2: 添加 legacy writer 测试**
 
 创建两点 line mesh，设置第二个点的 displacement，写出 frame 后检查 OBJ 文本包含 displaced vertex。
+
+Phase 5 前补充 3D-only writer 测试：
+
+- [ ] 使用 `RestMesh<double, 3>` 写出 triangle mesh，检查 vertex 为 `X + u`。
+- [ ] 使用 line-only `RestMesh<double, 3>` 写出 `l` records。
+- [ ] 确认 public tests 不再暗示 `Dim=2` 或 `float` OBJ writer 可用。
 
 - [x] **Step 3: 运行测试**
 
@@ -2488,12 +2624,11 @@ namespace pgo::integrator {
 
 template <typename T>
 struct TimeStepResult {
-    bool converged = false;
+    pgo::solver::SolverStatus status = pgo::solver::SolverStatus::max_iterations;
     std::size_t solver_iterations = 0;
     T final_value{};
     T final_gradient_norm{};
     T dt{};
-    std::string message;
 };
 
 } // namespace pgo::integrator
@@ -2615,7 +2750,75 @@ ctest --preset debug -R "Inertial|BackwardEuler|solver"
 
 ## Phase 5: Example Simulation 和 OBJ Frame Pipeline
 
-### Task 5.1: 添加 example asset 和 CMake
+**Phase 5 目标:** 把 Phase 0-4 的架构用一个可视化 example 压一遍。Phase 5 应该消费现有 core/integrator，不新增 simulation world、runtime polymorphism、material system、bending/collision/contact 或 GPU path。允许新增的 core 组件仅限后续 Phase 6/C API 也会复用的小型 full energy / status helper。
+
+目标 pipeline：
+
+```text
+read_obj_rest_mesh_3d
+  -> identify pinned top row by bbox tolerance
+  -> build DirichletBoundary / ReducedDofMap
+  -> build MassSpringLocalEnergyProvider
+  -> AssembledEnergy
+  -> ConstantForceEnergy gravity
+  -> EnergySum
+  -> BackwardEuler::step
+  -> ObjFrameWriter3d
+```
+
+### Task 5.1: 添加 reusable force/status helpers
+
+**文件:**
+- 创建: `include/pgo/energy/constant_force_energy.hpp`
+- 创建: `include/pgo/solver/status_name.hpp`
+- 创建: `tests/energy/test_constant_force_energy.cpp`
+- 修改: `tests/CMakeLists.txt`
+
+- [ ] **Step 1: 实现 `ConstantForceEnergy<T>`**
+
+语义：
+
+```text
+E_force(u) = -f^T u
+gradient = -f
+hessian = 0
+```
+
+设计约束：
+
+- `ConstantForceEnergy<T>` 是 full-space energy，满足 `FullEnergy`。
+- force vector size 必须等于 full displacement DOF count。
+- 该 energy 不依赖 mesh、不知道 gravity、不知道 examples。
+- Phase 5 用它表达 gravity；Phase 6 的 C API `gravity_scale` 也可以复用它。
+
+- [ ] **Step 2: 添加 `solver::status_name(...)`**
+
+`include/pgo/solver/status_name.hpp` 提供 constexpr/string_view helper，把 `SolverStatus` 转成稳定文本：
+
+```cpp
+namespace pgo::solver {
+
+[[nodiscard]] constexpr std::string_view status_name(SolverStatus status);
+
+} // namespace pgo::solver
+```
+
+约束：
+
+- 不引入 `spdlog`。
+- 不建泛泛的 `utils/logger.hpp`。
+- core 只提供 status 到字符串的小 helper；examples/tools 自己决定怎么打印。
+
+- [ ] **Step 3: 添加 tests**
+
+测试：
+
+- `ConstantForceEnergy` value / gradient / Hessian 与手算一致。
+- `value_gradient_hessian` 与单独接口一致。
+- `static_assert(pgo::energy::FullEnergy<ConstantForceEnergy<double>, double>)`。
+- `status_name` 覆盖所有 `SolverStatus` enumerators。
+
+### Task 5.2: 添加 example asset 和 CMake
 
 **文件:**
 - 创建: `examples/CMakeLists.txt`
@@ -2625,7 +2828,7 @@ ctest --preset debug -R "Inertial|BackwardEuler|solver"
 
 ```cmake
 add_executable(pgo_mass_spring_cloth mass_spring_cloth.cpp)
-target_link_libraries(pgo_mass_spring_cloth PRIVATE pgo::core CLI11::CLI11)
+target_link_libraries(pgo_mass_spring_cloth PRIVATE pgo::core pgo::io CLI11::CLI11)
 ```
 
 - [ ] **Step 2: 创建 4x4 cloth grid OBJ**
@@ -2633,11 +2836,13 @@ target_link_libraries(pgo_mass_spring_cloth PRIVATE pgo::core CLI11::CLI11)
 要求：
 
 - 使用 triangular faces。
+- 每个 quad 使用固定 diagonal 方向，保证结果可复现。
 - 顶部一行可以通过最大 `y` 坐标识别。
 - mesh edge indices 可以从 faces 自动抽取。
+- 不加入 bending springs、secondary diagonals、wind、collision 或 damping abstraction。
 
 
-### Task 5.2: 添加 mass-spring cloth example
+### Task 5.3: 添加 mass-spring cloth example
 
 **文件:**
 - 创建: `examples/mass_spring_cloth.cpp`
@@ -2653,18 +2858,55 @@ target_link_libraries(pgo_mass_spring_cloth PRIVATE pgo::core CLI11::CLI11)
 --stiffness 100
 --gravity 9.8
 --dt 0.016
+--ramp-frames 20
 ```
 
 执行流程：
 
-- 读取 OBJ 为 rest mesh。
+- 通过 `read_obj_rest_mesh_3d` 读取 OBJ 为 `RestMesh<double, 3>`。
 - 从 `mesh.edge_indices()` / `mesh.edge_vertex()` 构造 mass-spring energy。
 - 固定 top-row vertices 的 displacement DOFs 为 0。
-- 每一帧将 gravity 从 0 ramp 到目标值。
+- 使用 bbox tolerance 识别 top row：`eps = 1e-6 * bbox_diagonal`，当 `abs(y - max_y) <= eps` 时 pin vertex；不要使用 `y == max_y`。
+- 构造 uniform lumped per-DOF mass：Milestone 1 每个 vertex mass 默认为 1，每个 component 使用同一个 scalar mass。
+- 用 `ConstantForceEnergy<double>` 表达 gravity：`f_vertex = mass_vertex * gravity_vector`，再展开为 per-DOF force vector。
+- 每一帧将 gravity 从 0 ramp 到目标值：`scale = min(1, frame_index / ramp_frames)`。
 - 使用 Phase 4 的 `BackwardEuler<T>::step(...)` 求解一个动态 timestep。
-- 使用 `ObjFrameWriter` 写出 OBJ frame。
+- 使用 `ObjFrameWriter3d` 写出 OBJ frame。
 
-- [ ] **Step 2: 构建并运行 example**
+- [ ] **Step 2: 固定 frame 输出语义**
+
+语义：
+
+- `--frames N` 表示输出 exactly N 个 OBJ files。
+- `frame_0000.obj` 是 step 前的初始 state。
+- 后续 `N - 1` 个 frame 每次 successful `BackwardEuler::step(...)` 后写出。
+- 默认 `--ramp-frames` 可以取 `min(20, frames - 1)`；显式传参时要求非负。
+
+- [ ] **Step 3: solver failure 处理**
+
+每帧 step 后检查结果：
+
+```cpp
+const auto result = integrator.step(...);
+if (result.status != pgo::solver::SolverStatus::converged) {
+    std::cerr << std::format(
+        "Frame {} failed: status={}, iterations={}, value={}, grad_norm={}\n",
+        frame,
+        pgo::solver::status_name(result.status),
+        result.solver_iterations,
+        result.final_value,
+        result.final_gradient_norm);
+    return 2;
+}
+```
+
+要求：
+
+- Example 遇到 solver failure 直接打印并停止，不静默继续。
+- `BackwardEuler` 默认只在 converged 时 commit state；failure 时 example 不应写出半失败状态。
+- 打印使用 `std::cerr` + `<format>`，不引入 `spdlog`。
+
+- [ ] **Step 4: 构建并运行 example**
 
 ```bash
 cmake --build --preset debug --target pgo_mass_spring_cloth
@@ -2674,7 +2916,7 @@ cmake --build --preset debug --target pgo_mass_spring_cloth
 期望：生成 `frames/frame_0000.obj` 到 `frames/frame_0004.obj`。
 
 
-### Task 5.3: 添加 OBJ frames -> Alembic C++ tool
+### Task 5.4: 添加 OBJ frames -> Alembic C++ tool
 
 **文件:**
 - 创建: `tools/CMakeLists.txt`
@@ -3244,5 +3486,5 @@ STL types, Eigen types, and template types do not cross this boundary.
 
 - 覆盖范围：计划覆盖 build system、CI、Eigen acceleration 配置、C++23 header-oriented core、Eigen backend layer、GPU-aware storage、rest/displacement 分离、DOF reduction、OBJ input/output、local energy model/provider assembly、mass-spring energy、Newton solver、example frames、C99 dynamic-library API、Alembic 后处理。
 - 占位扫描：计划不包含 `TBD`、`TODO`、`implement later` 等未落实占位。
-- 类型一致性：核心名称统一使用 `RestMesh`、`DofLayout`、`Displacement`、`DirichletBoundary`、`ReducedDofMap`、`MassSpringLocalEnergyModel`、`MassSpringLocalEnergyProvider`、`ReducedEnergyView`、`ObjFrameWriter`、`NewtonSolver`、`pgo_world_t`、`pgo_error_t`。
+- 类型一致性：核心名称统一使用 `RestMesh`、`DofLayout`、`Displacement`、`DirichletBoundary`、`ReducedDofMap`、`MassSpringLocalEnergyModel`、`MassSpringLocalEnergyProvider`、`ReducedEnergyView`、`ObjFrameWriter3d`、`NewtonSolver`、`pgo_world_t`、`pgo_error_t`。
 - 范围控制：Vulkan、Slang、FEM、contact、IPC、GPU solvers 不进入 Milestone 1，但数据布局和 API 边界保持兼容。
