@@ -2463,7 +2463,7 @@ ctest --preset debug -R solver
 - 创建: `tests/integrator/test_backward_euler.cpp`
 - 修改: `tests/CMakeLists.txt`
 
-- [ ] **Step 1: 实现 `DynamicState<T>` 和 `TimeStepResult<T>`**
+- [x] **Step 1: 实现 `DynamicState<T>` 和 `TimeStepResult<T>`**
 
 `include/pgo/integrator/dynamic_state.hpp`:
 
@@ -2500,7 +2500,7 @@ struct TimeStepResult {
 } // namespace pgo::integrator
 ```
 
-- [ ] **Step 2: 实现 `LumpedInertialEnergy<T>`**
+- [x] **Step 2: 实现 `LumpedInertialEnergy<T>`**
 
 `include/pgo/energy/inertial_energy.hpp` 提供 full-space inertia energy：
 
@@ -2541,7 +2541,7 @@ public:
 - mass 不能为负。零 mass 暂时允许，但可能导致 singular system；测试应使用正 mass。
 - `LumpedInertialEnergy` 满足 `FullEnergy`。
 
-- [ ] **Step 3: 实现 concrete `BackwardEuler<T>`**
+- [x] **Step 3: 实现 concrete `BackwardEuler<T>`**
 
 `include/pgo/integrator/backward_euler.hpp` 提供：
 
@@ -2587,7 +2587,7 @@ return TimeStepResult copied from solver_result
 - `BackwardEuler` 是 orchestration layer：构造 step energy、调用 solver、commit state。
 - Integrator 不实现 line search，不处理 Hessian regularization，不知道 local provider。
 
-- [ ] **Step 4: 添加 inertia energy 测试**
+- [x] **Step 4: 添加 inertia energy 测试**
 
 测试：
 
@@ -2595,7 +2595,7 @@ return TimeStepResult copied from solver_result
 - `value_gradient_hessian` 与单独接口一致。
 - `static_assert(pgo::energy::FullEnergy<LumpedInertialEnergy<double>, double>)`。
 
-- [ ] **Step 5: 添加 Backward Euler smoke test**
+- [x] **Step 5: 添加 Backward Euler smoke test**
 
 使用单自由度或小 chain：
 
@@ -2606,7 +2606,7 @@ return TimeStepResult copied from solver_result
 - 验证自由 DOF 朝 external force 方向更新。
 - 验证 `state.v == (state.u_new - state.u_old) / dt`。
 
-- [ ] **Step 6: 运行测试**
+- [x] **Step 6: 运行测试**
 
 ```bash
 cmake --build --preset debug
