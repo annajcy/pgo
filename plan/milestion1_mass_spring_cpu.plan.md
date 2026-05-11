@@ -2038,7 +2038,7 @@ ctest --preset debug -R "EnergyConcept|AssembledEnergy|CPUAssembler"
 - 创建: `tests/energy/test_reduced_energy.cpp`
 - 修改: `tests/CMakeLists.txt`
 
-- [ ] **Step 1: 实现 tuple-based `EnergySum<T, Energies...>`**
+- [x] **Step 1: 实现 tuple-based `EnergySum<T, Energies...>`**
 
 组合多个 full-space energies：
 
@@ -2077,7 +2077,7 @@ public:
 - `value_gradient_hessian` 优先每个子 energy 调用 fused API，累加 value / gradient / Hessian。
 - 空 `EnergySum` 暂不支持；如果 `Energies...` 为空应在 compile-time 或 constructor 中拒绝。
 
-- [ ] **Step 2: 添加 `EnergySum` 测试**
+- [x] **Step 2: 添加 `EnergySum` 测试**
 
 使用两个 quadratic full energies：
 
@@ -2093,7 +2093,7 @@ E_i(u) = 0.5 * u^T A_i u - b_i^T u + c_i
 - `EnergySum::value_gradient_hessian` 与单独接口一致。
 - `static_assert(pgo::energy::FullEnergy<EnergySum<...>, double>)`。
 
-- [ ] **Step 3: 实现 `ReducedEnergyView<T, Energy>`**
+- [x] **Step 3: 实现 `ReducedEnergyView<T, Energy>`**
 
 职责：
 
@@ -2167,7 +2167,7 @@ public:
 - `scatter_solution` / `scatter_direction` 是 convenience API，直接转发 dof map，方便 solver debug 和 example 输出。
 - `ReducedEnergyView` 满足 `DifferentiableEnergy`，但不要把它当作 `FullEnergy`。
 
-- [ ] **Step 4: 添加 reduced energy 测试**
+- [x] **Step 4: 添加 reduced energy 测试**
 
 使用 quadratic energy：
 
@@ -2191,7 +2191,7 @@ restrict_matrix_to_free(full_hessian)
 - `ReducedEnergyView::scatter_direction(free_du)` 的 fixed DOF 为 0。
 - `static_assert(pgo::energy::DifferentiableEnergy<ReducedEnergyView<...>, double>)`。
 
-- [ ] **Step 5: 运行测试**
+- [x] **Step 5: 运行测试**
 
 ```bash
 cmake --build --preset debug
