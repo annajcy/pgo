@@ -2208,15 +2208,28 @@ ctest --preset debug -R "EnergySum|ReducedEnergy|solver"
 - 创建: `tests/solver/test_line_search.cpp`
 - 修改: `tests/CMakeLists.txt`
 
-- [x] **Step 1: 定义 `SolverResult<T>`**
+- [x] **Step 1: 定义 `SolverResult<T>` 和 `SolverStatus`**
 
-字段：
+实际落地引入 `SolverStatus` 枚举代替裸 `bool converged` + `std::string message`，支持 programmatic dispatch：
 
-- `bool converged`
-- `std::size_t iterations`
-- `T final_value`
-- `T final_gradient_norm`
-- `std::string message`
+```cpp
+enum class SolverStatus {
+    converged,
+    max_iterations,
+    regularization_failed,
+    line_search_failed,
+};
+
+template <typename T>
+struct SolverResult {
+    SolverStatus status = SolverStatus::max_iterations;
+    std::size_t iterations = 0;
+    T final_value{};
+    T final_gradient_norm{};
+};
+```
+
+调用侧使用 `result.status == SolverStatus::converged` 判断成功，不再依赖裸 bool 或解析错误消息。
 
 - [x] **Step 2: 定义 `NewtonOptions<T>` 和 `LineSearchOptions<T>`**
 
@@ -2355,7 +2368,7 @@ ctest --preset debug -R "LineSearch|solver"
 - 修改: `tests/solver/test_solver.cpp`
 - 修改: `tests/CMakeLists.txt`
 
-- [ ] **Step 1: 实现 Newton solver**
+- [x] **Step 1: 实现 Newton solver**
 
 行为：
 
@@ -2363,8 +2376,8 @@ ctest --preset debug -R "LineSearch|solver"
 - 每轮计算 value、gradient、Hessian。
 - 解 `(H + lambda I) du = -g`，使用 Eigen `SimplicialLDLT`。
 - factorization 失败或 direction 不是 descent 时增加 diagonal regularization。
-- 使用 feasible Armijo line search；默认 feasible set 是 `AlwaysFeasible<T>`。
-- gradient norm 小于 tolerance 或达到 max iterations 时停止。
+- diagonal regularization 已抽取为独立函数 `regularized_newton_direction<T>(hessian, gradient, du, options)`，后续可 swap 为 modified Cholesky 或 PSD projection policy 而不改 `solve_newton` 主体。
+- 返回 `SolverResult<T>`，包含 `SolverStatus` 枚举：`converged` / `max_iterations` / `regularization_failed` / `line_search_failed`。
 
 推荐 API：
 
@@ -2400,11 +2413,11 @@ SolverResult<T> solve_newton(const Energy& energy,
 - line search 返回 0 或低于 `min_step` 时返回 failure message。
 - 成功接受 step 后执行 `z += alpha * du`。
 
-- [ ] **Step 2: 添加 quadratic convergence 测试**
+- [x] **Step 2: 添加 quadratic convergence 测试**
 
 使用 positive definite quadratic energy，验证 Newton 收敛到解析 minimizer。
 
-- [ ] **Step 3: 添加 diagonal regularization 测试**
+- [x] **Step 3: 添加 diagonal regularization 测试**
 
 使用一个 Hessian 在初始点不可直接给出 descent direction 的 toy differentiable energy，验证 solver 会增加 `lambda` 并最终下降。
 
@@ -2413,7 +2426,7 @@ SolverResult<T> solve_newton(const Energy& energy,
 - energy 层返回 true Hessian。
 - 测试只检查 solver 能得到下降并收敛到合理点；不要要求 energy Hessian PSD。
 
-- [ ] **Step 4: 添加 reduced mass-spring smoke test**
+- [x] **Step 4: 添加 reduced mass-spring smoke test**
 
 创建三点 chain，固定 vertex 0，对末端施加简单 external force energy，求解 reduced energy，验证末端 displacement 朝 force 方向。
 
@@ -2433,7 +2446,7 @@ MassSpringLocalEnergyProvider
   -> solve_newton
 ```
 
-- [ ] **Step 5: 运行测试**
+- [x] **Step 5: 运行测试**
 
 ```bash
 cmake --build --preset debug
