@@ -2790,6 +2790,7 @@ hessian = 0
 - force vector size 必须等于 full displacement DOF count。
 - 该 energy 不依赖 mesh、不知道 gravity、不知道 examples。
 - Phase 5 用它表达 gravity；Phase 6 的 C API `gravity_scale` 也可以复用它。
+- Gravity 组装与 `ConstantForceEnergy` 解耦：example 层通过 free function `make_gravity_force(lumped_mass, g) -> DVec<T>` 将 per-vertex lumped mass 和 3D gravity vector 展开为 per-DOF force vector，再传入 `ConstantForceEnergy`。不引入继承关系或 `GravityForceEnergy` 子类。
 
 - [ ] **Step 2: 添加 `solver::status_name(...)`**
 

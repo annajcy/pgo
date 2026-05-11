@@ -5,6 +5,7 @@ add_executable(pgo_tests
     base/test_assert.cpp
     dof/test_dof.cpp
     energy/test_assembled_energy.cpp
+    energy/test_constant_force_energy.cpp
     energy/test_energy_concepts.cpp
     energy/test_energy_sum.cpp
     energy/test_mass_spring_local_energy_provider.cpp
