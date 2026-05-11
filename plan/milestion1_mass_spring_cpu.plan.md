@@ -2208,7 +2208,7 @@ ctest --preset debug -R "EnergySum|ReducedEnergy|solver"
 - 创建: `tests/solver/test_line_search.cpp`
 - 修改: `tests/CMakeLists.txt`
 
-- [ ] **Step 1: 定义 `SolverResult<T>`**
+- [x] **Step 1: 定义 `SolverResult<T>`**
 
 字段：
 
@@ -2218,7 +2218,7 @@ ctest --preset debug -R "EnergySum|ReducedEnergy|solver"
 - `T final_gradient_norm`
 - `std::string message`
 
-- [ ] **Step 2: 定义 `NewtonOptions<T>` 和 `LineSearchOptions<T>`**
+- [x] **Step 2: 定义 `NewtonOptions<T>` 和 `LineSearchOptions<T>`**
 
 `include/pgo/solver/solver_options.hpp` 提供：
 
@@ -2247,7 +2247,7 @@ struct NewtonOptions {
 } // namespace pgo::solver
 ```
 
-- [ ] **Step 3: 定义 `AlwaysFeasible<T>` 和 feasible-set concept**
+- [x] **Step 3: 定义 `AlwaysFeasible<T>` 和 feasible-set concept**
 
 `include/pgo/solver/feasible_set.hpp` 提供：
 
@@ -2274,7 +2274,7 @@ struct AlwaysFeasible {
 
 Milestone 1 只实现 `AlwaysFeasible`。`ReducedFeasibleSet`、IPC/CCD feasibility、barrier domain check 留到后续 milestone。
 
-- [ ] **Step 4: 实现 feasible Armijo backtracking line search**
+- [x] **Step 4: 实现 feasible Armijo backtracking line search**
 
 输入：
 
@@ -2302,37 +2302,46 @@ template <typename T, typename Energy, typename FeasibleSet>
     const LineSearchOptions<T>& options);
 ```
 
-实现语义：
+实现已从耦合版本重构为解耦两层架构：
 
+**`armijo_backtrack`** — 纯 Armijo line search，不知晓 feasibility：
 ```text
-alpha = min(1, feasibility_safety * feasible.max_step(z, dz))
+alpha = 1
 while alpha >= min_step:
-  trial = z + alpha * dz
-  if !feasible.is_feasible(trial):
-    alpha *= shrink
-    continue
-  if energy.value(trial) <= current_value + armijo_c * alpha * gradient.dot(dz):
+  if energy.value(z + alpha * dz) <= current_value + armijo_c * alpha * gradient.dot(dz):
     return alpha
   alpha *= shrink
 return 0
 ```
 
+**`feasible_armijo_line_search`** — 薄封装，将 feasibility 与 backtrack 正交组合：
+```text
+feasible_alpha = feasibility_safety * feasible.max_step(z, dz)
+backtrack_alpha = armijo_backtrack(energy, z, feasible_alpha * dz, gradient, current_value, options)
+return feasible_alpha * backtrack_alpha
+```
+
 设计约束：
 
+- `armijo_backtrack` 只依赖 `DifferentiableEnergy`，不依赖 `FeasibleSetLike`，可独立复用于 Newton/L-BFGS 等 solver。
+- Feasibility 只通过 `max_step` 表达（不通过 `is_feasible` 逐点检查）；`max_step` 给出的 bound 天然保证整个回溯区间 feasible。
 - Dirichlet feasibility 已经由 `ReducedEnergyView` 的 reduced variables 保证，不需要 line search 额外检查。
 - Line search 不修改 Hessian，不负责 PSD projection。
 - 如果 `gradient.dot(dz) >= 0`，调用者应该先拒绝 direction；line search 可以 assert/require descent 或返回 0。
 
-- [ ] **Step 5: 添加 line search 测试**
+- [x] **Step 5: 添加 line search 测试**
 
-测试内容：
-
-- 对一维 quadratic，descent direction 接受 `alpha = 1`。
+`LineSearch.*` 测试（feasible + Armijo 组合）：
+- 对一维 quadratic，descent direction 接受 `alpha = 1`（`AlwaysFeasible` + Armijo 1.0）。
 - 非充分下降时会 backtrack。
 - `AlwaysFeasible::max_step == 1` 且 `is_feasible == true`。
-- 构造一个 toy feasible set，其 `max_step` 返回 `0.25`，验证初始 alpha 被 feasibility cap 限制。
+- 构造一个 toy feasible set，其 `max_step` 返回 `0.25`，验证 alpha 被 feasibility cap 限制。
 
-- [ ] **Step 6: 运行测试**
+`ArmijoBacktrack.*` 测试（纯 Armijo，不依赖 feasibility）：
+- 一维 quadratic Newton step 接受 `alpha = 1`。
+- 严格 `armijo_c = 1.0` 时回溯。
+
+- [x] **Step 6: 运行测试**
 
 ```bash
 cmake --build --preset debug

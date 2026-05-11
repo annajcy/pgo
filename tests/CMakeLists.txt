@@ -14,6 +14,7 @@ add_executable(pgo_tests
     math/test_backend.cpp
     math/test_eigen_config.cpp
     math/test_finite_difference.cpp
+    solver/test_line_search.cpp
     storage/test_storage.cpp
 )
 
