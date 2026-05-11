@@ -38,7 +38,7 @@ TEST(obj_reader, ReadsTriangularMeshAndExtractsUniqueEdges) {
         output << "f 1//20 3//22 4//23\n";
     }
 
-    const auto mesh = pgo::io::read_obj_rest_mesh<double, 3>(path);
+    const auto mesh = pgo::io::read_obj_rest_mesh_3d(path);
 
     EXPECT_EQ(4, mesh.num_vertices());
     EXPECT_EQ(2, mesh.num_faces());
@@ -48,26 +48,6 @@ TEST(obj_reader, ReadsTriangularMeshAndExtractsUniqueEdges) {
     EXPECT_EQ(0, mesh.face_vertex(0, 0));
     EXPECT_EQ(1, mesh.face_vertex(0, 1));
     EXPECT_EQ(2, mesh.face_vertex(0, 2));
-}
-
-TEST(obj_reader, DropsZCoordinateForTwoDimensionalMeshes) {
-    const auto path = test_output_dir() / "line_2d.obj";
-    {
-        std::ofstream output{path};
-        output << "v 0 0 5\n";
-        output << "v 1 2 6\n";
-        output << "l 1 2\n";
-    }
-
-    const auto mesh = pgo::io::read_obj_rest_mesh<double, 2>(path);
-
-    EXPECT_EQ(2, mesh.num_vertices());
-    EXPECT_EQ(1, mesh.num_edges());
-    EXPECT_EQ(0, mesh.num_faces());
-    EXPECT_DOUBLE_EQ(0.0, mesh.rest_positions()[0]);
-    EXPECT_DOUBLE_EQ(0.0, mesh.rest_positions()[1]);
-    EXPECT_DOUBLE_EQ(1.0, mesh.rest_positions()[2]);
-    EXPECT_DOUBLE_EQ(2.0, mesh.rest_positions()[3]);
 }
 
 TEST(obj_frame_writer, WritesDisplacedLineFrameWhenMeshHasNoFaces) {

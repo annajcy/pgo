@@ -30,6 +30,8 @@ target_include_directories(pgo_core INTERFACE
 target_link_libraries(pgo_core INTERFACE pgo::eigen_config)
 target_link_libraries(pgo_core INTERFACE pgo_project_warnings pgo_project_sanitizers)
 
+add_subdirectory(src/io)
+
 if(PGO_BUILD_C_API AND EXISTS "${PROJECT_SOURCE_DIR}/src/c_api/CMakeLists.txt")
     add_subdirectory(src/c_api)
 endif()

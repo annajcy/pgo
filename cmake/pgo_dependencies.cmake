@@ -1,4 +1,5 @@
 find_package(Eigen3 REQUIRED CONFIG)
+find_package(tinyobjloader REQUIRED CONFIG)
 
 if(PGO_BUILD_EXAMPLES)
     find_package(CLI11 REQUIRED CONFIG)

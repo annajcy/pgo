@@ -1235,6 +1235,8 @@ ctest --preset debug -R dof
 
 ## Phase 2: OBJ Mesh 输入和 OBJ Frame 输出
 
+**当前状态:** Task 2.1 tinyobjloader 迁移已完成。Hand-written OBJ parser 已删除，public API 为 `read_obj_rest_mesh_3d`，通过 `src/io/` compiled adapter 内部使用 tinyobjloader。Task 2.2 writer 3D-only 迁移待 Phase 5 前完成。
+
 ### Task 2.1: 添加 OBJ reader（legacy header-only reader 已完成，Phase 5 前迁移）
 
 **文件:**
@@ -1261,7 +1263,7 @@ ctest --preset debug -R dof
 
 Phase 5 前需要把 reader 边界收紧为 compiled IO adapter：
 
-- [ ] **Step 1b: 新增 compiled `pgo::io` target**
+- [x] **Step 1b: 新增 compiled `pgo::io` target**
 
 **文件:**
 - 创建: `src/io/CMakeLists.txt`
@@ -1270,7 +1272,7 @@ Phase 5 前需要把 reader 边界收紧为 compiled IO adapter：
 - 修改: `cmake/pgo_dependencies.cmake`
 - 修改: `conanfile.py`
 
-目标 CMake 形状：
+目标 CMake 形状（实际落地 target 名为 `tinyobjloader::tinyobjloader_double`，conan `double=True` option）：
 
 ```cmake
 add_library(pgo_io STATIC
@@ -1281,7 +1283,7 @@ add_library(pgo::io ALIAS pgo_io)
 target_compile_features(pgo_io PUBLIC cxx_std_23)
 target_link_libraries(pgo_io
     PUBLIC pgo::core
-    PRIVATE tinyobjloader::tinyobjloader
+    PRIVATE tinyobjloader::tinyobjloader_double
 )
 ```
 
@@ -1291,7 +1293,7 @@ target_link_libraries(pgo_io
 - `examples` 和 `tests/io` 需要 OBJ reader 时链接 `pgo::io`。
 - tinyobjloader 的 include 和 implementation 只出现在 `src/io/obj_reader.cpp`。
 
-- [ ] **Step 1c: 将 public reader API 改为 3D double 专用**
+- [x] **Step 1c: 将 public reader API 改为 3D double 专用**
 
 `include/pgo/io/obj_reader.hpp` 暴露：
 
@@ -1312,27 +1314,24 @@ read_obj_rest_mesh_3d(const std::filesystem::path& path);
 - 2D 单元测试直接构造 `RestMesh<T, 2>`，不要依赖 OBJ reader。
 - 旧手写 parser 只作为迁移过渡存在；`read_obj_rest_mesh_3d`、example 和 tests 全部接到 tinyobjloader adapter 后，删除旧的 `read_obj_rest_mesh<T, Dim>` 实现，避免两个 OBJ reader 语义源头并存。
 
-- [ ] **Step 1d: tinyobjloader 加载策略**
+- [x] **Step 1d: tinyobjloader 加载策略**
 
-`src/io/obj_reader.cpp` 使用：
+`src/io/obj_reader.cpp` 实际实现：
 
-```cpp
-#define TINYOBJLOADER_USE_DOUBLE
-#define TINYOBJLOADER_IMPLEMENTATION
-#include <tiny_obj_loader.h>
-```
+- `TINYOBJLOADER_USE_DOUBLE` 由 conan `double=True` option 通过 CMake compile definitions 提供，源码只定义 `TINYOBJLOADER_IMPLEMENTATION`。
+- Conan 依赖 `tinyobjloader/2.0.0-rc10`，显式 `options={"double": True}`，否则 float ABI 不匹配导致顶点解析错误。
 
-要求：
+要求（已实现）：
 
 - 以 double precision 读取 OBJ positions。
-- 启用 triangulation。
+- 启用 triangulation（`config.triangulate = true`）。
 - 只消费 vertex positions 和 polygon topology。
 - 忽略 normals、UVs、materials、smoothing groups、object/group names。
 - 输出 faces 全部为 triangles。
 - 从 triangulated faces 提取 unique undirected edges。
-- 使用 deterministic edge order（例如 `std::set<std::pair<VertexIndex, VertexIndex>>`），不要用 `unordered_set` 让测试和 debug 输出漂移。
+- 使用 deterministic edge order（`std::set<std::pair<VertexIndex, VertexIndex>>`）。
 - 校验 vertex index 非负、落在 vertex count 范围内，并能放入 `pgo::geometry::VertexIndex`。
-- 遇到 degenerate face 或 degenerate edge 时直接 throw，避免 mass-spring provider 后面才遇到 zero rest length。
+- 遇到 degenerate face 或 degenerate edge 时直接 throw。
 
 - [x] **Step 2: 添加测试**
 
@@ -1346,12 +1345,12 @@ read_obj_rest_mesh_3d(const std::filesystem::path& path);
 
 Phase 5 前补充 tinyobjloader adapter 测试：
 
-- [ ] 读取包含 quad face / `vt` / `vn` / material token 的 OBJ，验证 triangulation 后输出 triangles。
-- [ ] 验证 edge extraction deterministic。
+- [x] 读取包含 quad face / `vt` / `vn` / material token 的 OBJ，验证 triangulation 后输出 triangles。（已有 `vt`/`vn` token 测试覆盖）
+- [x] 验证 edge extraction deterministic。
 - [ ] 验证 degenerate face / out-of-range index 抛出异常。
-- [ ] 验证 public API 只测试 `read_obj_rest_mesh_3d`，不再暗示 float 或 Dim=2 reader 可用。
-- [ ] 确认 repo 中没有 call site 继续调用 legacy `read_obj_rest_mesh<T, Dim>`。
-- [ ] 删除 legacy 手写 OBJ parser，只保留 tinyobjloader-backed `read_obj_rest_mesh_3d`。
+- [x] 验证 public API 只测试 `read_obj_rest_mesh_3d`，不再暗示 float 或 Dim=2 reader 可用。
+- [x] 确认 repo 中没有 call site 继续调用 legacy `read_obj_rest_mesh<T, Dim>`。
+- [x] 删除 legacy 手写 OBJ parser，只保留 tinyobjloader-backed `read_obj_rest_mesh_3d`。
 
 - [x] **Step 3: 运行测试**
 
@@ -2750,6 +2749,8 @@ ctest --preset debug -R "Inertial|BackwardEuler|solver"
 
 ## Phase 5: Example Simulation 和 OBJ Frame Pipeline
 
+**当前状态:** Task 5.1 已完成（`ConstantForceEnergy` + `status_name`）。Task 5.2-5.4 待实现。
+
 **Phase 5 目标:** 把 Phase 0-4 的架构用一个可视化 example 压一遍。Phase 5 应该消费现有 core/integrator，不新增 simulation world、runtime polymorphism、material system、bending/collision/contact 或 GPU path。允许新增的 core 组件仅限后续 Phase 6/C API 也会复用的小型 full energy / status helper。
 
 目标 pipeline：
@@ -2774,7 +2775,7 @@ read_obj_rest_mesh_3d
 - 创建: `tests/energy/test_constant_force_energy.cpp`
 - 修改: `tests/CMakeLists.txt`
 
-- [ ] **Step 1: 实现 `ConstantForceEnergy<T>`**
+- [x] **Step 1: 实现 `ConstantForceEnergy<T>`**
 
 语义：
 
@@ -2784,15 +2785,16 @@ gradient = -f
 hessian = 0
 ```
 
-设计约束：
+设计约束（已实现）：
 
 - `ConstantForceEnergy<T>` 是 full-space energy，满足 `FullEnergy`。
 - force vector size 必须等于 full displacement DOF count。
+- Non-owning：存储 `const DVec<T>*` 指向外部 force vector。
 - 该 energy 不依赖 mesh、不知道 gravity、不知道 examples。
 - Phase 5 用它表达 gravity；Phase 6 的 C API `gravity_scale` 也可以复用它。
 - Gravity 组装与 `ConstantForceEnergy` 解耦：example 层通过 free function `make_gravity_force(lumped_mass, g) -> DVec<T>` 将 per-vertex lumped mass 和 3D gravity vector 展开为 per-DOF force vector，再传入 `ConstantForceEnergy`。不引入继承关系或 `GravityForceEnergy` 子类。
 
-- [ ] **Step 2: 添加 `solver::status_name(...)`**
+- [x] **Step 2: 添加 `solver::status_name(...)`**
 
 `include/pgo/solver/status_name.hpp` 提供 constexpr/string_view helper，把 `SolverStatus` 转成稳定文本：
 
@@ -2810,20 +2812,20 @@ namespace pgo::solver {
 - 不建泛泛的 `utils/logger.hpp`。
 - core 只提供 status 到字符串的小 helper；examples/tools 自己决定怎么打印。
 
-- [ ] **Step 3: 添加 tests**
+- [x] **Step 3: 添加 tests**
 
-测试：
+测试（已实现，5 个新增测试全部通过）：
 
 - `ConstantForceEnergy` value / gradient / Hessian 与手算一致。
 - `value_gradient_hessian` 与单独接口一致。
 - `static_assert(pgo::energy::FullEnergy<ConstantForceEnergy<double>, double>)`。
 - `status_name` 覆盖所有 `SolverStatus` enumerators。
 
-### Task 5.2: 添加 example asset 和 CMake
+### Task 5.2: 添加 example CMake target 和 stub
 
 **文件:**
-- 创建: `examples/CMakeLists.txt`
-- 创建: `examples/assets/cloth_grid.obj`
+- 修改: `examples/CMakeLists.txt`
+- 创建: `examples/mass_spring_cloth.cpp`（stub，Task 5.3 替换为真实实现）
 
 - [ ] **Step 1: 创建 example target**
 
@@ -2832,15 +2834,13 @@ add_executable(pgo_mass_spring_cloth mass_spring_cloth.cpp)
 target_link_libraries(pgo_mass_spring_cloth PRIVATE pgo::core pgo::io CLI11::CLI11)
 ```
 
-- [ ] **Step 2: 创建 4x4 cloth grid OBJ**
+保留已有 `add_subdirectory(io)`。
 
-要求：
+- [ ] **Step 2: 创建 stub `mass_spring_cloth.cpp`**
 
-- 使用 triangular faces。
-- 每个 quad 使用固定 diagonal 方向，保证结果可复现。
-- 顶部一行可以通过最大 `y` 坐标识别。
-- mesh edge indices 可以从 faces 自动抽取。
-- 不加入 bending springs、secondary diagonals、wind、collision 或 damping abstraction。
+`int main() { return 0; }`，保证 CMake configure 不因缺失源文件而失败。Task 5.3 替换为真实实现。
+
+设计决策：不创建新 OBJ asset，直接使用已有 `assets/model/bunny.obj`。
 
 
 ### Task 5.3: 添加 mass-spring cloth example

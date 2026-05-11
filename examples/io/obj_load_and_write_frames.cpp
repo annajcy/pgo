@@ -39,7 +39,7 @@ int main(int argc, char** argv) {
     try {
         const auto options = parse_options(argc, argv);
 
-        const auto mesh = pgo::io::read_obj_rest_mesh<double, 3>(options.input);
+        const auto mesh = pgo::io::read_obj_rest_mesh_3d(options.input);
         pgo::io::ObjFrameWriter<double, 3> writer{options.output};
 
         pgo::math::DVec<double> displacement{pgo::math::dense_index(mesh.num_vertices() * static_cast<std::size_t>(3))};

@@ -19,6 +19,7 @@ class PgoRecipe(ConanFile):
     def requirements(self):
         self.requires("eigen/3.4.0")
         self.requires("cli11/[>=2.4 <3]")
+        self.requires("tinyobjloader/2.0.0-rc10", options={"double": True})
         self.requires("alembic/1.8.8")
 
     def build_requirements(self):

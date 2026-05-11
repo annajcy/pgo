@@ -24,6 +24,7 @@ add_executable(pgo_tests
 target_link_libraries(pgo_tests
     PRIVATE
         pgo::core
+        pgo::io
         GTest::gtest_main
 )
 
