@@ -9,6 +9,6 @@ target_include_directories(pgo_io PUBLIC
     $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(pgo_io
-    PUBLIC pgo::core
+    PUBLIC pgo::core Alembic::Alembic
     PRIVATE tinyobjloader::tinyobjloader_double
 )

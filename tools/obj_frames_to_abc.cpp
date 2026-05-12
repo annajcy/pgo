@@ -1,6 +1,5 @@
-#include <Alembic/AbcCoreOgawa/All.h>
-#include <Alembic/AbcGeom/All.h>
 #include <CLI/CLI.hpp>
+#include "pgo/io/abc_writer.hpp"
 #include <algorithm>
 #include <cstdlib>
 #include <exception>
@@ -180,38 +179,6 @@ void configure_cli(CLI::App& app, Options& options) {
     return frames;
 }
 
-void write_alembic(const std::filesystem::path& output, const std::vector<ObjFrame>& frames, const double fps) {
-    namespace Abc = Alembic::Abc;
-    namespace AbcGeom = Alembic::AbcGeom;
-
-    if (output.has_parent_path()) {
-        std::filesystem::create_directories(output.parent_path());
-    }
-
-    Abc::OArchive archive{Alembic::AbcCoreOgawa::WriteArchive(), output.string()};
-    const AbcGeom::TimeSampling time_sampling{1.0 / fps, 0.0};
-    const auto time_sampling_index = archive.addTimeSampling(time_sampling);
-
-    AbcGeom::OPolyMesh mesh_object{archive.getTop(), "mesh", time_sampling_index};
-    auto mesh_schema = mesh_object.getSchema();
-    mesh_schema.setTimeSampling(time_sampling_index);
-
-    Abc::Int32ArraySample face_indices{frames.front().face_indices.data(), frames.front().face_indices.size()};
-    Abc::Int32ArraySample face_counts{frames.front().face_counts.data(), frames.front().face_counts.size()};
-    for (const auto& frame : frames) {
-        std::vector<Imath::V3f> points;
-        points.reserve(frame.positions.size() / 3);
-        for (std::size_t index = 0; index < frame.positions.size(); index += 3) {
-            points.emplace_back(frame.positions[index], frame.positions[index + 1], frame.positions[index + 2]);
-        }
-
-        AbcGeom::OPolyMeshSchema::Sample sample{
-            AbcGeom::P3fArraySample{points.data(), points.size()},
-            face_indices, face_counts};
-        mesh_schema.set(sample);
-    }
-}
-
 } // namespace
 
 int main(int argc, char** argv) {
@@ -228,7 +195,21 @@ int main(int argc, char** argv) {
     try {
         const auto paths = frame_paths(options.frames_dir);
         const auto frames = load_frames(paths);
-        write_alembic(options.output, frames, options.fps);
+
+        std::vector<std::uint32_t> face_indices;
+        face_indices.reserve(frames.front().face_indices.size());
+        for (auto idx : frames.front().face_indices) {
+            face_indices.push_back(static_cast<std::uint32_t>(idx));
+        }
+
+        pgo::io::AbcWriter<double, 3> writer{
+            options.output, options.fps,
+            std::span<const std::uint32_t>{face_indices.data(), face_indices.size()},
+            std::span<const int>{frames.front().face_counts.data(), frames.front().face_counts.size()}};
+
+        for (const auto& frame : frames) {
+            writer.write_frame(std::span<const float>{frame.positions.data(), frame.positions.size()});
+        }
 
         std::cout << "frames: " << frames.size() << '\n';
         std::cout << "vertices: " << frames.front().positions.size() / 3 << '\n';

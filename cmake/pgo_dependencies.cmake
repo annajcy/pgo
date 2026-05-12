@@ -1,12 +1,11 @@
 find_package(Eigen3 REQUIRED CONFIG)
 find_package(tinyobjloader REQUIRED CONFIG)
 
-if(PGO_BUILD_EXAMPLES)
+if(PGO_BUILD_EXAMPLES OR PGO_BUILD_TOOLS)
     find_package(CLI11 REQUIRED CONFIG)
 endif()
 
-if(PGO_BUILD_TOOLS)
-    find_package(CLI11 REQUIRED CONFIG)
+if(PGO_BUILD_EXAMPLES OR PGO_BUILD_TOOLS)
     find_package(Alembic REQUIRED CONFIG)
 endif()
 
