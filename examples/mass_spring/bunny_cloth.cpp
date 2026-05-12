@@ -26,8 +26,8 @@ namespace {
 
 struct Options {
     std::filesystem::path input = "assets/model/bunny.obj";
-    std::filesystem::path output = "output/mass_spring/bunny";
-    std::filesystem::path abc_output;
+    std::filesystem::path output = "output/example/mass_spring/bunny";
+    std::filesystem::path abc_output = "output/example/mass_spring/bunny/bunny.abc";
     std::size_t frames = 300;
     double stiffness = 200000.0;
     double gravity = 9.81;

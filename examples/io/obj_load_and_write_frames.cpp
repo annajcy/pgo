@@ -15,7 +15,7 @@ namespace {
 
 struct Options {
     std::filesystem::path input = "assets/model/bunny.obj";
-    std::filesystem::path output = "output/example/obj_io";
+    std::filesystem::path output = "output/example/io/obj_frames";
     std::size_t frames = 20;
     double amplitude = 0.02;
 };

@@ -26,11 +26,11 @@
 namespace {
 
 struct Options {
-    std::filesystem::path output = "output/mass_spring/cloth";
-    std::filesystem::path abc_output;
-    std::size_t frames = 40;
+    std::filesystem::path output = "output/example/mass_spring/cloth";
+    std::filesystem::path abc_output = "output/example/mass_spring/cloth/cloth.abc";
+    std::size_t frames = 300;
     std::size_t resolution = 20;
-    double stiffness = 100.0;
+    double stiffness = 1000.0;
     double gravity = 9.8;
     double dt = 0.016;
     int ramp_frames = 0;
