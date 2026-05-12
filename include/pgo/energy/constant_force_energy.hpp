@@ -6,11 +6,11 @@
 namespace pgo::energy {
 
 template <typename T>
-class ConstantForceEnergy {
+class ConstantForceEnergyView {
     const pgo::math::DVec<T>* m_force;
 
 public:
-    explicit ConstantForceEnergy(const pgo::math::DVec<T>& force)
+    explicit ConstantForceEnergyView(const pgo::math::DVec<T>& force)
         : m_force{&force} {}
 
     [[nodiscard]] T value(const pgo::math::DVec<T>& full_u) const {

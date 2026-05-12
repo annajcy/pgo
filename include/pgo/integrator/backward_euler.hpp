@@ -24,10 +24,11 @@ public:
                            const bool commit_on_failure = false) const {
 
         const pgo::math::DVec<T> u_old = state.u;
+        const pgo::math::DVec<T> v_old = state.v;
         const pgo::math::DVec<T> u_hat = u_old + dt * state.v;
 
         const pgo::energy::LumpedInertialEnergy<T> inertia{lumped_mass, u_hat, dt};
-        const pgo::energy::EnergySum<T, PotentialEnergy, pgo::energy::LumpedInertialEnergy<T>> step_energy{
+        const pgo::energy::EnergySumView<T, PotentialEnergy, pgo::energy::LumpedInertialEnergy<T>> step_energy{
             potential_energy, inertia};
 
         const pgo::energy::ReducedEnergyView<T, decltype(step_energy)> reduced{step_energy, dof_map};
@@ -41,6 +42,7 @@ public:
         if (converged || commit_on_failure) {
             state.u = dof_map.scatter_solution(free_u);
             state.v = (state.u - u_old) / dt;
+            state.a = (state.v - v_old) / dt;
         }
 
         return {solver_result.status, solver_result.iterations,

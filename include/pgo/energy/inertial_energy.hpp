@@ -17,13 +17,14 @@ public:
     LumpedInertialEnergy(const pgo::math::DVec<T>& lumped_mass,
                          const pgo::math::DVec<T>& u_hat,
                          const T dt)
-        : m_lumped_mass{lumped_mass}, m_u_hat{u_hat}, m_inv_dt2{T{1} / (dt * dt)} {
+        : m_lumped_mass{lumped_mass}, m_u_hat{u_hat} {
         pgo::base::require(dt > T{0}, "dt must be positive");
         pgo::base::require(static_cast<std::size_t>(lumped_mass.size()) == static_cast<std::size_t>(u_hat.size()),
                            "lumped_mass and u_hat must have the same size");
         for (pgo::math::DenseIndex i = 0; i < lumped_mass.size(); ++i) {
             pgo::base::require(lumped_mass[i] >= T{0}, "lumped mass must be non-negative");
         }
+        m_inv_dt2 = T{1} / (dt * dt);
     }
 
     [[nodiscard]] T value(const pgo::math::DVec<T>& full_u) const {

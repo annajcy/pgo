@@ -1,5 +1,6 @@
 #pragma once
 
+#include "pgo/base/assert.hpp"
 #include "pgo/energy/energy_concepts.hpp"
 #include "pgo/solver/feasible_set.hpp"
 #include "pgo/solver/line_search.hpp"
@@ -16,6 +17,13 @@ template <typename T>
     const pgo::math::DVec<T>& gradient,
     pgo::math::DVec<T>& du,
     const NewtonOptions<T>& options) {
+
+    pgo::base::require(options.regularization_growth > T{1},
+                       "regularization_growth must be > 1");
+    pgo::base::require(options.min_regularization <= options.max_regularization,
+                       "min_regularization must be <= max_regularization");
+    pgo::base::require(options.initial_regularization <= options.max_regularization,
+                       "initial_regularization must be <= max_regularization");
 
     T lambda = options.initial_regularization;
 
@@ -89,6 +97,7 @@ SolverResult<T> solve_newton(const Energy& energy, const FeasibleSet& feasible, 
         z += alpha * du;
     }
 
+    energy.value_gradient_hessian(z, value, gradient, hessian);
     return {SolverStatus::max_iterations, options.max_iterations, value, gradient.norm()};
 }
 

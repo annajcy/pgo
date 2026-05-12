@@ -10,11 +10,11 @@ namespace pgo::energy {
 
 template <typename T, typename... Energies>
     requires (FullEnergy<Energies, T> && ...)
-class EnergySum {
+class EnergySumView {
     std::tuple<const Energies*...> m_energies;
 
 public:
-    explicit EnergySum(const Energies&... energies)
+    explicit EnergySumView(const Energies&... energies)
         : m_energies(&energies...) {}
 
     [[nodiscard]] T value(const pgo::math::DVec<T>& full_u) const {

@@ -8,11 +8,11 @@ namespace pgo::energy {
 
 template <typename T, typename Provider>
     requires LocalEnergyProvider<Provider, T>
-class AssembledEnergy {
+class AssembledEnergyView {
     const Provider* m_provider;
     
 public:
-    explicit AssembledEnergy(const Provider& provider)
+    explicit AssembledEnergyView(const Provider& provider)
         : m_provider(&provider) {}
 
     [[nodiscard]] T value(const pgo::math::DVec<T>& full_u) const {

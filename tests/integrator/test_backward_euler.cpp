@@ -145,6 +145,7 @@ TEST(BackwardEuler, UpdatesStateAndPreservesFixedDof) {
     state.v << 0.1, -0.2;
 
     const pgo::math::DVec<double> u_old = state.u;
+    const pgo::math::DVec<double> v_old = state.v;
     const double dt = 0.1;
     const pgo::integrator::BackwardEuler<double> integrator{};
 
@@ -166,6 +167,10 @@ TEST(BackwardEuler, UpdatesStateAndPreservesFixedDof) {
     // v = (u_new - u_old) / dt
     EXPECT_DOUBLE_EQ((state.u[0] - u_old[0]) / dt, state.v[0]);
     EXPECT_DOUBLE_EQ((state.u[1] - u_old[1]) / dt, state.v[1]);
+
+    // a = (v_new - v_old) / dt
+    EXPECT_DOUBLE_EQ((state.v[0] - v_old[0]) / dt, state.a[0]);
+    EXPECT_DOUBLE_EQ((state.v[1] - v_old[1]) / dt, state.a[1]);
 
 }
 

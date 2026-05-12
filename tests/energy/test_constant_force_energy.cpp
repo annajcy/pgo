@@ -6,12 +6,12 @@
 
 namespace pgo::energy::test {
 
-static_assert(FullEnergy<ConstantForceEnergy<double>, double>);
+static_assert(FullEnergy<ConstantForceEnergyView<double>, double>);
 
-TEST(ConstantForceEnergy, ValueIsNegativeForceDotU) {
+TEST(ConstantForceEnergyView, ValueIsNegativeForceDotU) {
     pgo::math::DVec<double> f(3);
     f << 1.0, -2.0, 0.5;
-    const ConstantForceEnergy<double> energy{f};
+    const ConstantForceEnergyView<double> energy{f};
 
     pgo::math::DVec<double> u(3);
     u << 3.0, 1.0, -2.0;
@@ -20,10 +20,10 @@ TEST(ConstantForceEnergy, ValueIsNegativeForceDotU) {
     EXPECT_DOUBLE_EQ(expected, energy.value(u));
 }
 
-TEST(ConstantForceEnergy, GradientIsNegativeForce) {
+TEST(ConstantForceEnergyView, GradientIsNegativeForce) {
     pgo::math::DVec<double> f(3);
     f << 1.0, -2.0, 0.5;
-    const ConstantForceEnergy<double> energy{f};
+    const ConstantForceEnergyView<double> energy{f};
 
     pgo::math::DVec<double> u(3);
     u << 3.0, 1.0, -2.0;
@@ -36,10 +36,10 @@ TEST(ConstantForceEnergy, GradientIsNegativeForce) {
     EXPECT_TRUE(expected.isApprox(g));
 }
 
-TEST(ConstantForceEnergy, HessianIsZero) {
+TEST(ConstantForceEnergyView, HessianIsZero) {
     pgo::math::DVec<double> f(3);
     f << 1.0, -2.0, 0.5;
-    const ConstantForceEnergy<double> energy{f};
+    const ConstantForceEnergyView<double> energy{f};
 
     pgo::math::DVec<double> u(3);
     u << 3.0, 1.0, -2.0;
@@ -52,10 +52,10 @@ TEST(ConstantForceEnergy, HessianIsZero) {
     EXPECT_EQ(H.nonZeros(), 0);
 }
 
-TEST(ConstantForceEnergy, FusedAPIEqualsSeparateCalls) {
+TEST(ConstantForceEnergyView, FusedAPIEqualsSeparateCalls) {
     pgo::math::DVec<double> f(3);
     f << 1.0, -2.0, 0.5;
-    const ConstantForceEnergy<double> energy{f};
+    const ConstantForceEnergyView<double> energy{f};
 
     pgo::math::DVec<double> u(3);
     u << 3.0, 1.0, -2.0;

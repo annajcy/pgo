@@ -34,11 +34,11 @@ public:
     }
 };
 
-static_assert(pgo::energy::FullEnergy<pgo::energy::AssembledEnergy<double, ToyEdgeEnergyProvider>, double>);
+static_assert(pgo::energy::FullEnergy<pgo::energy::AssembledEnergyView<double, ToyEdgeEnergyProvider>, double>);
 
-TEST(AssembledEnergy, MatchesCPUAssemblerOutputs) {
+TEST(AssembledEnergyView, MatchesCPUAssemblerOutputs) {
     const ToyEdgeEnergyProvider provider{};
-    const pgo::energy::AssembledEnergy<double, ToyEdgeEnergyProvider> energy{provider};
+    const pgo::energy::AssembledEnergyView<double, ToyEdgeEnergyProvider> energy{provider};
 
     pgo::math::DVec<double> u{2};
     u << 2.0, -1.0;

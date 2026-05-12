@@ -137,7 +137,7 @@ TEST(NewtonSolverMassSpring, ConvergesAtRestState) {
     const pgo::geometry::RestMesh<double, 1> mesh{rest, edges, {}};
 
     const pgo::energy::MassSpringLocalEnergyProvider<double, 1> provider{mesh, 1.0};
-    const pgo::energy::AssembledEnergy<double, pgo::energy::MassSpringLocalEnergyProvider<double, 1>> full_energy{
+    const pgo::energy::AssembledEnergyView<double, pgo::energy::MassSpringLocalEnergyProvider<double, 1>> full_energy{
         provider};
 
     pgo::dof::DirichletBoundary<double> boundary;
@@ -145,7 +145,7 @@ TEST(NewtonSolverMassSpring, ConvergesAtRestState) {
     const pgo::dof::ReducedDofMap<double> dof_map{3, boundary};
 
     const pgo::energy::ReducedEnergyView<double,
-        pgo::energy::AssembledEnergy<double, pgo::energy::MassSpringLocalEnergyProvider<double, 1>>>
+        pgo::energy::AssembledEnergyView<double, pgo::energy::MassSpringLocalEnergyProvider<double, 1>>>
         reduced{full_energy, dof_map};
 
     // start at rest (free DOFs 1,2 = 0)
@@ -197,15 +197,15 @@ TEST(NewtonSolverMassSpring, ForcePullsFreeVertexInExpectedDirection) {
     const pgo::geometry::RestMesh<double, 1> mesh{rest, edges, {}};
 
     const pgo::energy::MassSpringLocalEnergyProvider<double, 1> provider{mesh, 1.0};
-    const pgo::energy::AssembledEnergy<double, pgo::energy::MassSpringLocalEnergyProvider<double, 1>> ms_energy{
+    const pgo::energy::AssembledEnergyView<double, pgo::energy::MassSpringLocalEnergyProvider<double, 1>> ms_energy{
         provider};
 
     pgo::math::DVec<double> force(3);
     force << 0.0, 0.0, 1.0;
     const ConstantForceEnergy force_energy{force};
 
-    const pgo::energy::EnergySum<double,
-        pgo::energy::AssembledEnergy<double, pgo::energy::MassSpringLocalEnergyProvider<double, 1>>,
+    const pgo::energy::EnergySumView<double,
+        pgo::energy::AssembledEnergyView<double, pgo::energy::MassSpringLocalEnergyProvider<double, 1>>,
         ConstantForceEnergy>
         total{ms_energy, force_energy};
 

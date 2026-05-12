@@ -48,9 +48,9 @@ public:
 static_assert(DifferentiableEnergy<ParametricQuadraticEnergy, double>);
 static_assert(FullEnergy<ParametricQuadraticEnergy, double>);
 
-static_assert(FullEnergy<EnergySum<double, ParametricQuadraticEnergy, ParametricQuadraticEnergy>, double>);
+static_assert(FullEnergy<EnergySumView<double, ParametricQuadraticEnergy, ParametricQuadraticEnergy>, double>);
 
-TEST(EnergySum, ValueIsSumOfTwoEnergies) {
+TEST(EnergySumView, ValueIsSumOfTwoEnergies) {
     const pgo::math::DMat<double> A1 = (pgo::math::DMat<double>(3, 3) << 2, 0, 0, 0, 3, 0, 0, 0, 1).finished();
     const pgo::math::DMat<double> A2 = (pgo::math::DMat<double>(3, 3) << 1, 0, 0, 0, 2, 0, 0, 0, 4).finished();
 
@@ -61,7 +61,7 @@ TEST(EnergySum, ValueIsSumOfTwoEnergies) {
 
     const ParametricQuadraticEnergy e1{A1, b1, 0.5};
     const ParametricQuadraticEnergy e2{A2, b2, -0.3};
-    const EnergySum<double, ParametricQuadraticEnergy, ParametricQuadraticEnergy> sum{e1, e2};
+    const EnergySumView<double, ParametricQuadraticEnergy, ParametricQuadraticEnergy> sum{e1, e2};
 
     pgo::math::DVec<double> u(3);
     u << 1.0, -0.5, 2.0;
@@ -69,7 +69,7 @@ TEST(EnergySum, ValueIsSumOfTwoEnergies) {
     EXPECT_DOUBLE_EQ(e1.value(u) + e2.value(u), sum.value(u));
 }
 
-TEST(EnergySum, GradientIsSumOfTwoEnergies) {
+TEST(EnergySumView, GradientIsSumOfTwoEnergies) {
     const pgo::math::DMat<double> A1 = (pgo::math::DMat<double>(3, 3) << 2, 0, 0, 0, 3, 0, 0, 0, 1).finished();
     const pgo::math::DMat<double> A2 = (pgo::math::DMat<double>(3, 3) << 1, 0, 0, 0, 2, 0, 0, 0, 4).finished();
 
@@ -80,7 +80,7 @@ TEST(EnergySum, GradientIsSumOfTwoEnergies) {
 
     const ParametricQuadraticEnergy e1{A1, b1, 0.5};
     const ParametricQuadraticEnergy e2{A2, b2, -0.3};
-    const EnergySum<double, ParametricQuadraticEnergy, ParametricQuadraticEnergy> sum{e1, e2};
+    const EnergySumView<double, ParametricQuadraticEnergy, ParametricQuadraticEnergy> sum{e1, e2};
 
     pgo::math::DVec<double> u(3);
     u << 1.0, -0.5, 2.0;
@@ -95,7 +95,7 @@ TEST(EnergySum, GradientIsSumOfTwoEnergies) {
     EXPECT_TRUE(expected.isApprox(g_sum));
 }
 
-TEST(EnergySum, HessianIsSumOfTwoEnergies) {
+TEST(EnergySumView, HessianIsSumOfTwoEnergies) {
     const pgo::math::DMat<double> A1 = (pgo::math::DMat<double>(3, 3) << 2, 0, 0, 0, 3, 0, 0, 0, 1).finished();
     const pgo::math::DMat<double> A2 = (pgo::math::DMat<double>(3, 3) << 1, 0, 0, 0, 2, 0, 0, 0, 4).finished();
 
@@ -106,7 +106,7 @@ TEST(EnergySum, HessianIsSumOfTwoEnergies) {
 
     const ParametricQuadraticEnergy e1{A1, b1, 0.5};
     const ParametricQuadraticEnergy e2{A2, b2, -0.3};
-    const EnergySum<double, ParametricQuadraticEnergy, ParametricQuadraticEnergy> sum{e1, e2};
+    const EnergySumView<double, ParametricQuadraticEnergy, ParametricQuadraticEnergy> sum{e1, e2};
 
     pgo::math::DVec<double> u(3);
     u << 1.0, -0.5, 2.0;
@@ -121,7 +121,7 @@ TEST(EnergySum, HessianIsSumOfTwoEnergies) {
     EXPECT_TRUE(expected_dense.isApprox(sum_dense));
 }
 
-TEST(EnergySum, FusedAPIEqualsSeparateCalls) {
+TEST(EnergySumView, FusedAPIEqualsSeparateCalls) {
     const pgo::math::DMat<double> A1 = (pgo::math::DMat<double>(3, 3) << 2, 0, 0, 0, 3, 0, 0, 0, 1).finished();
     const pgo::math::DMat<double> A2 = (pgo::math::DMat<double>(3, 3) << 1, 0, 0, 0, 2, 0, 0, 0, 4).finished();
 
@@ -132,7 +132,7 @@ TEST(EnergySum, FusedAPIEqualsSeparateCalls) {
 
     const ParametricQuadraticEnergy e1{A1, b1, 0.5};
     const ParametricQuadraticEnergy e2{A2, b2, -0.3};
-    const EnergySum<double, ParametricQuadraticEnergy, ParametricQuadraticEnergy> sum{e1, e2};
+    const EnergySumView<double, ParametricQuadraticEnergy, ParametricQuadraticEnergy> sum{e1, e2};
 
     pgo::math::DVec<double> u(3);
     u << 1.0, -0.5, 2.0;
@@ -151,7 +151,7 @@ TEST(EnergySum, FusedAPIEqualsSeparateCalls) {
     EXPECT_TRUE(H.toDense().isApprox(fused_H.toDense()));
 }
 
-TEST(EnergySum, ThreeEnergiesSumCorrectly) {
+TEST(EnergySumView, ThreeEnergiesSumCorrectly) {
     const pgo::math::DMat<double> A = (pgo::math::DMat<double>(2, 2) << 1, 0, 0, 1).finished();
     pgo::math::DVec<double> b1(2);
     b1 << 1, 0;
@@ -163,7 +163,7 @@ TEST(EnergySum, ThreeEnergiesSumCorrectly) {
     const ParametricQuadraticEnergy e1{A, b1, 0.0};
     const ParametricQuadraticEnergy e2{A, b2, 1.0};
     const ParametricQuadraticEnergy e3{A, b3, 2.0};
-    const EnergySum<double, ParametricQuadraticEnergy, ParametricQuadraticEnergy, ParametricQuadraticEnergy>
+    const EnergySumView<double, ParametricQuadraticEnergy, ParametricQuadraticEnergy, ParametricQuadraticEnergy>
         sum{e1, e2, e3};
 
     pgo::math::DVec<double> u(2);

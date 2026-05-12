@@ -1,5 +1,6 @@
 #pragma once
 
+#include "pgo/base/assert.hpp"
 #include "pgo/energy/energy_concepts.hpp"
 #include "pgo/solver/feasible_set.hpp"
 #include "pgo/solver/solver_options.hpp"
@@ -15,6 +16,10 @@ template <typename T, typename Energy>
     const pgo::math::DVec<T>& gradient,
     const T current_value,
     const LineSearchOptions<T>& options) {
+
+    pgo::base::require(options.shrink > T{0}, "line search shrink must be > 0");
+    pgo::base::require(options.shrink < T{1}, "line search shrink must be < 1");
+    pgo::base::require(options.min_step > T{0}, "line search min_step must be > 0");
 
     T alpha = T{1};
 

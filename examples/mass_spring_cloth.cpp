@@ -137,7 +137,7 @@ int main(int argc, char** argv) {
         lumped_mass.setOnes();
 
         const pgo::energy::MassSpringLocalEnergyProvider<double, 3> provider{mesh, opts.stiffness};
-        const pgo::energy::AssembledEnergy<double, decltype(provider)> potential{provider};
+        const pgo::energy::AssembledEnergyView<double, decltype(provider)> potential{provider};
 
         const pgo::integrator::BackwardEuler<double> integrator;
         pgo::integrator::DynamicState<double> state;
@@ -160,8 +160,8 @@ int main(int argc, char** argv) {
                                            ? 1.0
                                            : std::min(1.0, static_cast<double>(step) / static_cast<double>(opts.ramp_frames));
             const auto gravity_force = make_gravity_force(lumped_mass, opts.gravity, ramp_scale);
-            const pgo::energy::ConstantForceEnergy<double> gravity_energy{gravity_force};
-            const pgo::energy::EnergySum<double, decltype(potential), decltype(gravity_energy)> step_energy{
+            const pgo::energy::ConstantForceEnergyView<double> gravity_energy{gravity_force};
+            const pgo::energy::EnergySumView<double, decltype(potential), decltype(gravity_energy)> step_energy{
                 potential, gravity_energy};
 
             const auto result = integrator.step(step_energy, lumped_mass, dof_map, state, opts.dt, newton_opts,
