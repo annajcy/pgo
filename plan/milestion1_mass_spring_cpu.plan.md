@@ -26,7 +26,7 @@
 - `RestMesh<T, Dim>` 仍然是项目自己的 flat storage；tinyobjloader types、materials、normals、UVs、shape/group metadata 不得越过 `pgo::io` 边界。
 - Milestone 1 IO 层整体只承诺 double precision 3D OBJ：`read_obj_rest_mesh_3d(...)` 和 `ObjFrameWriter3d`。2D 测试直接构造 `RestMesh<T, 2>`，不通过 OBJ IO。
 - Phase 5 是 application pipeline validation：不新增 `SimulationWorld`、`Scene`、`IntegratorBase`、runtime energy registry、material system、bending/collision/contact/GPU path。
-- 不引入 `spdlog` 或泛泛的 `utils/logger.hpp`。core 返回 programmatic status；examples/tools 用 `std::cerr` + `<format>` 打印，最多加小型 `solver::status_name(...)` helper。
+- 引入轻量 `pgo::log` facade，但 core numerical modules 不依赖它。默认 backend 不依赖 spdlog；spdlog 只能作为 optional sink backend 给 examples/tools/C API bridge 使用。
 - C++ template、STL、Eigen、异常、allocator 内部细节不能越过 C ABI 边界。
 - C API 只暴露 `extern "C"`、opaque handles、POD descriptors、pointer/count arrays、status code、explicit destroy/copy functions。
 - C bridge 的 `.cpp` 内部可以使用现代 C++、STL、RAII、Eigen，但所有 exported C function 必须 catch exceptions 并转换为 `pgo_status_t` + `pgo_error_t`。
@@ -57,42 +57,51 @@
       windows-x86_64-msvc
   include/
     pgo/
-      assembly/
-        cpu_assembler.hpp
-        local_matrix.hpp
-      base/
-        assert.hpp
-      dof/
-        dirichlet_boundary.hpp
-        displacement.hpp
-        dof_layout.hpp
-        reduced_dof_map.hpp
-      energy/
-        constant_force_energy.hpp
-        energy_concepts.hpp
-        energy_sum.hpp
-        inertial_energy.hpp
-        mass_spring_local_energy_provider.hpp
-        reduced_energy.hpp
-      geometry/
-        rest_mesh.hpp
-        topology.hpp
+      core/
+        assembly/
+          cpu_assembler.hpp
+          local_matrix.hpp
+        base/
+          assert.hpp
+        dof/
+          dirichlet_boundary.hpp
+          displacement.hpp
+          dof_layout.hpp
+          reduced_dof_map.hpp
+        energy/
+          constant_force_energy.hpp
+          energy_concepts.hpp
+          energy_sum.hpp
+          inertial_energy.hpp
+          mass_spring_local_energy_provider.hpp
+          reduced_energy.hpp
+        geometry/
+          rest_mesh.hpp
+          topology.hpp
+        math/
+          backend.hpp
+          eigen_backend.hpp
+          finite_difference.hpp
+          scalar.hpp
+        solver/
+          line_search.hpp
+          newton_solver.hpp
+          solver_result.hpp
+          status_name.hpp
+        storage/
+          array_view.hpp
+          host_buffer.hpp
       io/
         obj_frame_writer.hpp
         obj_reader.hpp
-      math/
-        backend.hpp
-        eigen_backend.hpp
-        finite_difference.hpp
-        scalar.hpp
-      solver/
-        line_search.hpp
-        newton_solver.hpp
-        solver_result.hpp
-        status_name.hpp
-      storage/
-        array_view.hpp
-        host_buffer.hpp
+      log/
+        level.hpp
+        logger.hpp
+        null_sink.hpp
+        registry.hpp
+        sink.hpp
+        spdlog_sink.hpp
+        stderr_sink.hpp
     pgo_c/
       export.h
       pgo.h
@@ -100,6 +109,11 @@
     io/
       CMakeLists.txt
       obj_reader.cpp
+    log/
+      CMakeLists.txt
+      registry.cpp
+      spdlog_sink.cpp
+      stderr_sink.cpp
     c_api/
       CMakeLists.txt
       pgo_c.cpp
@@ -124,6 +138,9 @@
       test_rest_mesh.cpp
     io/
       test_obj_io.cpp
+    log/
+      test_log.cpp
+      test_spdlog_sink.cpp
     math/
       test_backend.cpp
       test_eigen_config.cpp
@@ -2747,9 +2764,903 @@ cmake --build --preset debug
 ctest --preset debug -R "Inertial|BackwardEuler|solver"
 ```
 
+## Phase 4.6: `pgo::log` Facade
+
+**当前状态:** 待实现。这个 phase 放在 Phase 5 example 之前，让 examples、tools 和后续 C API bridge 可以统一日志输出；core numerical modules 继续只返回 programmatic status，不直接打印。
+
+**Phase 4.6 目标:** 实现一个轻量 logging facade：
+
+```text
+Logger   = 调用侧轻量 handle，带 logger name
+Registry = logging context，持有 sink/backend 和全局 level
+Sink     = backend 抽象，负责真正输出
+```
+
+设计边界：
+
+- `pgo::core` 不 link `pgo::log`。
+- `pgo::log` 默认不依赖 spdlog。
+- spdlog 是 optional backend，仅在 `PGO_ENABLE_SPDLOG=ON` 时启用。
+- C API public header 不暴露 logging 类型；C API bridge 内部可以使用 `pgo::log`。
+- examples/tools/C API bridge 可以使用 `pgo::log`；`include/pgo/base`、`math`、`storage`、`geometry`、`dof`、`assembly`、`energy`、`solver`、`integrator` 不 include `pgo/log`。
+- `Logger` 第一版不做 template formatter，只接收 `std::string_view`；调用侧需要格式化时使用 `<format>`。
+- `Registry` 不缓存 named logger；`get(name)` 每次返回一个 lightweight `Logger` value（shared_ptr + string）。在 hot loop 中建议 capture 后重用，避免重复调用 `get()`。
+- `Logger` 持有 name、shared sink 和 immutable `Level m_threshold`。threshold 在 Logger 构造时拷入，之后不可变，彻底消除 data race。`Registry` 同时持有 Sink 和默认 Level；`get(name)` 继承默认 Level，`get(name, level)` 可显式覆盖。`set_level()` 只影响后续创建的 Logger，不影响已有 Logger。
+
+### Task 4.6.1: 添加 log 目录和基础类型
+
+**文件:**
+- 创建: `include/pgo/log/level.hpp`
+- 创建: `include/pgo/log/sink.hpp`
+- 创建: `include/pgo/log/logger.hpp`
+- 创建: `include/pgo/log/null_sink.hpp`
+- 创建: `include/pgo/log/stderr_sink.hpp`
+- 创建: `src/log/stderr_sink.cpp`
+
+- [ ] **Step 1: 实现 `level.hpp`**
+
+`include/pgo/log/level.hpp`:
+
+```cpp
+#pragma once
+
+#include <string_view>
+
+namespace pgo::log {
+
+enum class Level {
+    trace,
+    debug,
+    info,
+    warn,
+    error,
+    off,
+};
+
+static_assert(static_cast<int>(Level::trace) < static_cast<int>(Level::error),
+              "Level enum must be ordered from least to most severe");
+
+[[nodiscard]] constexpr std::string_view level_name(Level level) {
+    switch (level) {
+    case Level::trace:
+        return "trace";
+    case Level::debug:
+        return "debug";
+    case Level::info:
+        return "info";
+    case Level::warn:
+        return "warn";
+    case Level::error:
+        return "error";
+    case Level::off:
+        return "off";
+    }
+    return "unknown";
+}
+
+[[nodiscard]] constexpr bool should_log(Level message_level, Level threshold) {
+    return threshold != Level::off && static_cast<int>(message_level) >= static_cast<int>(threshold);
+}
+
+} // namespace pgo::log
+```
+
+- [ ] **Step 2: 实现 backend abstraction**
+
+`include/pgo/log/sink.hpp`:
+
+```cpp
+#pragma once
+
+#include "pgo/log/level.hpp"
+
+#include <string_view>
+
+namespace pgo::log {
+
+class Sink {
+public:
+    virtual ~Sink() = default;
+
+    virtual void log(Level level, std::string_view logger_name, std::string_view message) = 0;
+};
+
+} // namespace pgo::log
+```
+
+> **格式一致性说明:** `StderrSink` 输出 `[level] [name] message`，`SpdlogSink` 委托 spdlog 自带格式（前缀由 spdlog pattern 控制）。两种 sink 的文本格式不保证一致；下游如需统一格式应为所有 sink 套一层 adapter 或统一使用同一种 sink。
+
+```
+
+- [ ] **Step 3: 实现 `Logger` value type**
+
+`include/pgo/log/logger.hpp`:
+
+```cpp
+#pragma once
+
+#include "pgo/log/level.hpp"
+#include "pgo/log/sink.hpp"
+
+#include <memory>
+#include <string>
+#include <string_view>
+#include <utility>
+
+namespace pgo::log {
+
+class Logger {
+public:
+    Logger(std::shared_ptr<Sink> sink, Level threshold, std::string name)
+        : m_sink{std::move(sink)},
+          m_threshold{threshold},
+          m_name{std::move(name)} {}
+
+    [[nodiscard]] std::string_view name() const {
+        return m_name;
+    }
+
+    void log(Level level, std::string_view message) const {
+        if (!m_sink) {
+            return;
+        }
+        if (should_log(level, m_threshold)) {
+            m_sink->log(level, m_name, message);
+        }
+    }
+
+    void trace(std::string_view message) const { log(Level::trace, message); }
+    void debug(std::string_view message) const { log(Level::debug, message); }
+    void info(std::string_view message) const { log(Level::info, message); }
+    void warn(std::string_view message) const { log(Level::warn, message); }
+    void error(std::string_view message) const { log(Level::error, message); }
+
+private:
+    std::shared_ptr<Sink> m_sink;
+    Level m_threshold;
+    std::string m_name;
+};
+
+} // namespace pgo::log
+```
+
+- [ ] **Step 4: 实现 `NullSink`**
+
+`include/pgo/log/null_sink.hpp`:
+
+```cpp
+#pragma once
+
+#include "pgo/log/sink.hpp"
+
+namespace pgo::log {
+
+class NullSink final : public Sink {
+public:
+    void log(Level, std::string_view, std::string_view) override {}
+};
+
+} // namespace pgo::log
+```
+
+- [ ] **Step 5: 实现 thread-safe `StderrSink`**
+
+`include/pgo/log/stderr_sink.hpp`:
+
+```cpp
+#pragma once
+
+#include "pgo/log/sink.hpp"
+
+#include <mutex>
+
+namespace pgo::log {
+
+class StderrSink final : public Sink {
+public:
+    void log(Level level, std::string_view logger_name, std::string_view message) override;
+
+private:
+    std::mutex m_mutex;
+};
+
+} // namespace pgo::log
+```
+
+`src/log/stderr_sink.cpp`:
+
+```cpp
+#include "pgo/log/stderr_sink.hpp"
+
+#include <iostream>
+
+namespace pgo::log {
+
+void StderrSink::log(Level level, std::string_view logger_name, std::string_view message) {
+    std::scoped_lock lock{m_mutex};
+    std::cerr << '[' << level_name(level) << "] [" << logger_name << "] " << message << '\n';
+}
+
+} // namespace pgo::log
+```
+
+### Task 4.6.2: 添加 `Registry`
+
+**文件:**
+- 创建: `include/pgo/log/registry.hpp`
+- 创建: `src/log/registry.cpp`
+
+- [ ] **Step 1: 定义 `Registry` API**
+
+`include/pgo/log/registry.hpp`:
+
+```cpp
+#pragma once
+
+#include "pgo/log/logger.hpp"
+
+#include <memory>
+#include <string_view>
+
+namespace pgo::log {
+
+class Registry {
+public:
+    Registry();
+    explicit Registry(std::shared_ptr<Sink> sink, Level threshold = Level::info);
+
+    // with default level
+    [[nodiscard]] Logger root() const;
+    [[nodiscard]] Logger get(std::string_view name) const;
+
+    // with explicit level override
+    [[nodiscard]] Logger root(Level level) const;
+    [[nodiscard]] Logger get(std::string_view name, Level level) const;
+
+    void set_sink(std::shared_ptr<Sink> sink);
+    void set_level(Level threshold);
+
+    // Logger 是轻量值类型（shared_ptr + string + Level），可 local capture 复用。
+    // set_level() 只影响后续 get()/root() 创建的 Logger，不影响已有 Logger。
+
+private:
+    std::shared_ptr<Sink> m_sink;
+    Level m_threshold;
+};
+
+Registry& default_registry();
+
+// with default level
+[[nodiscard]] Logger root();
+[[nodiscard]] Logger get(std::string_view name);
+
+// with explicit level override
+[[nodiscard]] Logger root(Level level);
+[[nodiscard]] Logger get(std::string_view name, Level level);
+
+void set_sink(std::shared_ptr<Sink> sink);
+void set_level(Level level);
+
+void trace(std::string_view message);
+void debug(std::string_view message);
+void info(std::string_view message);
+void warn(std::string_view message);
+void error(std::string_view message);
+
+} // namespace pgo::log
+```
+
+- [ ] **Step 2: 实现默认 registry 和 convenience API**
+
+`src/log/registry.cpp`:
+
+```cpp
+#include "pgo/log/registry.hpp"
+#include "pgo/log/stderr_sink.hpp"
+
+#include <utility>
+
+namespace pgo::log {
+
+Registry::Registry()
+    : Registry{std::make_shared<StderrSink>(), Level::info} {}
+
+Registry::Registry(std::shared_ptr<Sink> sink, Level threshold)
+    : m_sink{std::move(sink)},
+      m_threshold{threshold} {}
+
+Logger Registry::root() const {
+    return get("pgo");
+}
+
+Logger Registry::get(std::string_view name) const {
+    return Logger{m_sink, m_threshold, std::string{name}};
+}
+
+Logger Registry::root(Level level) const {
+    return get("pgo", level);
+}
+
+Logger Registry::get(std::string_view name, Level level) const {
+    return Logger{m_sink, level, std::string{name}};
+}
+
+void Registry::set_sink(std::shared_ptr<Sink> sink) {
+    m_sink = std::move(sink);
+}
+
+void Registry::set_level(Level threshold) {
+    m_threshold = threshold;
+}
+
+Registry& default_registry() {
+    static Registry registry;
+    return registry;
+}
+
+Logger root() {
+    return default_registry().root();
+}
+
+Logger get(std::string_view name) {
+    return default_registry().get(name);
+}
+
+Logger root(Level level) {
+    return default_registry().root(level);
+}
+
+Logger get(std::string_view name, Level level) {
+    return default_registry().get(name, level);
+}
+
+void set_sink(std::shared_ptr<Sink> sink) {
+    default_registry().set_sink(std::move(sink));
+}
+
+void set_level(Level level) {
+    default_registry().set_level(level);
+}
+
+void trace(std::string_view message) { root(Level::trace).trace(message); }
+void debug(std::string_view message) { root(Level::debug).debug(message); }
+void info(std::string_view message) { root(Level::info).info(message); }
+void warn(std::string_view message) { root(Level::warn).warn(message); }
+void error(std::string_view message) { root(Level::error).error(message); }
+
+} // namespace pgo::log
+```
+
+### Task 4.6.3: 添加 CMake target
+
+**文件:**
+- 修改: `cmake/pgo_options.cmake`
+- 修改: `CMakeLists.txt`
+- 创建: `src/log/CMakeLists.txt`
+
+- [ ] **Step 1: 添加 logging option**
+
+在 `cmake/pgo_options.cmake` 增加：
+
+```cmake
+option(PGO_ENABLE_SPDLOG "Enable spdlog-backed pgo::log sink" OFF)
+```
+
+- [ ] **Step 2: 添加顶层 subdirectory**
+
+在 `CMakeLists.txt` 中 `add_subdirectory(src/io)` 后加入：
+
+```cmake
+add_subdirectory(src/log)
+```
+
+设计约束：不要让 `pgo_core` link `pgo::log`。
+
+- [ ] **Step 3: 创建 `pgo_log` target**
+
+`src/log/CMakeLists.txt`:
+
+```cmake
+add_library(pgo_log
+    registry.cpp
+    stderr_sink.cpp
+)
+add_library(pgo::log ALIAS pgo_log)
+
+target_compile_features(pgo_log PUBLIC cxx_std_23)
+target_include_directories(pgo_log PUBLIC
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(pgo_log PUBLIC pgo_project_warnings pgo_project_sanitizers)
+```
+
+### Task 4.6.4: 添加基础测试
+
+**文件:**
+- 创建: `tests/log/test_log.cpp`
+- 修改: `tests/CMakeLists.txt`
+
+- [ ] **Step 1: 添加 `CaptureSink` 测试 fixture**
+
+`tests/log/test_log.cpp`:
+
+```cpp
+#include "pgo/log/null_sink.hpp"
+#include "pgo/log/registry.hpp"
+#include "pgo/log/stderr_sink.hpp"
+
+#include <gtest/gtest.h>
+
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace pgo::log::test {
+
+class CaptureSink final : public Sink {
+public:
+    struct Entry {
+        Level level;
+        std::string name;
+        std::string message;
+    };
+
+    void log(Level level, std::string_view name, std::string_view message) override {
+        entries.push_back({level, std::string{name}, std::string{message}});
+    }
+
+    std::vector<Entry> entries;
+};
+
+TEST(LogLevel, NamesAndThresholdsMatchExpectedOrdering) {
+    EXPECT_EQ("trace", level_name(Level::trace));
+    EXPECT_EQ("debug", level_name(Level::debug));
+    EXPECT_EQ("info", level_name(Level::info));
+    EXPECT_EQ("warn", level_name(Level::warn));
+    EXPECT_EQ("error", level_name(Level::error));
+    EXPECT_EQ("off", level_name(Level::off));
+
+    EXPECT_TRUE(should_log(Level::warn, Level::info));
+    EXPECT_FALSE(should_log(Level::debug, Level::info));
+    EXPECT_FALSE(should_log(Level::error, Level::off));
+}
+
+TEST(Registry, GetReturnsNamedLoggerAndForwardsMessagesToSink) {
+    auto sink = std::make_shared<CaptureSink>();
+    Registry registry{sink};
+
+    const Logger logger = registry.get("pgo.test", Level::trace);
+    EXPECT_EQ("pgo.test", logger.name());
+
+    logger.info("hello");
+
+    ASSERT_EQ(1, sink->entries.size());
+    EXPECT_EQ(Level::info, sink->entries[0].level);
+    EXPECT_EQ("pgo.test", sink->entries[0].name);
+    EXPECT_EQ("hello", sink->entries[0].message);
+}
+
+TEST(Registry, LevelFiltersMessagesBasedOnCallSiteLevel) {
+    auto sink = std::make_shared<CaptureSink>();
+    Registry registry{sink};
+    const Logger logger = registry.get("pgo.filter", Level::warn);
+
+    logger.info("hidden");
+    logger.warn("shown");
+    logger.error("also shown");
+
+    ASSERT_EQ(2, sink->entries.size());
+    EXPECT_EQ(Level::warn, sink->entries[0].level);
+    EXPECT_EQ(Level::error, sink->entries[1].level);
+}
+
+TEST(Registry, RootLoggerNameIsPgo) {
+    auto sink = std::make_shared<CaptureSink>();
+    Registry registry{sink};
+
+    registry.root(Level::trace).debug("root message");
+
+    ASSERT_EQ(1, sink->entries.size());
+    EXPECT_EQ("pgo", sink->entries[0].name);
+}
+
+// Convenience free functions (set_sink, get, info, ...) are trivial wrappers
+// around default_registry(). Their forwarding logic is already covered by the
+// Registry member-function tests above; this test only verifies that the
+// singleton is accessible and the free functions don't crash.
+TEST(Registry, DefaultRegistryConvenienceApiIsAccessible) {
+    EXPECT_NO_THROW(info("smoke test"));
+}
+
+TEST(NullSink, DropsMessagesWithoutThrowing) {
+    Registry registry{std::make_shared<NullSink>()};
+    EXPECT_NO_THROW(registry.get("pgo.null", Level::trace).error("ignored"));
+}
+
+} // namespace pgo::log::test
+```
+
+- [ ] **Step 2: 添加独立 log test target**
+
+在 `tests/CMakeLists.txt` 末尾加入：
+
+```cmake
+add_executable(pgo_log_tests
+    log/test_log.cpp
+)
+
+target_link_libraries(pgo_log_tests
+    PRIVATE
+        pgo::log
+        GTest::gtest_main
+)
+
+gtest_discover_tests(pgo_log_tests)
+```
+
+> log tests 全部使用局部 `Registry` 实例 + `CaptureSink`，不依赖全局 `default_registry()` 状态，可以安全并行执行。
+
+- [ ] **Step 3: 运行默认 log 测试**
+
+```bash
+cmake --build --preset debug --target pgo_log_tests
+ctest --preset debug -R "Log|Registry|NullSink"
+```
+
+期望：`pgo_log_tests` 相关测试全部通过。
+
+### Task 4.6.5: 添加 optional spdlog sink
+
+**文件:**
+- 修改: `conanfile.py`
+- 修改: `cmake/pgo_dependencies.cmake`
+- 修改: `CMakePresets.json`
+- 修改: `src/log/CMakeLists.txt`
+- 创建: `include/pgo/log/spdlog_sink.hpp`
+- 创建: `src/log/spdlog_sink.cpp`
+- 创建: `tests/log/test_spdlog_sink.cpp`
+- 修改: `tests/CMakeLists.txt`
+
+- [ ] **Step 1: 给 Conan recipe 添加 option-gated spdlog 依赖**
+
+`conanfile.py` 中添加：
+
+```python
+    options = {
+        "enable_spdlog": [True, False],
+    }
+    default_options = {
+        "enable_spdlog": False,
+    }
+```
+
+并在 `requirements()` 中加入：
+
+```python
+        if self.options.enable_spdlog:
+            self.requires("spdlog/[>=1.14 <2]")
+```
+
+- [ ] **Step 2: CMake 只在启用时查找 spdlog**
+
+`cmake/pgo_dependencies.cmake`:
+
+```cmake
+if(PGO_ENABLE_SPDLOG)
+    find_package(spdlog CONFIG REQUIRED)
+endif()
+```
+
+- [ ] **Step 3: 添加 `debug-spdlog` preset**
+
+`CMakePresets.json` 中新增 configure/build/test preset。configure preset 使用独立 Conan toolchain folder：
+
+```json
+{
+  "name": "debug-spdlog",
+  "displayName": "Debug spdlog",
+  "inherits": "base",
+  "binaryDir": "${sourceDir}/build/debug-spdlog",
+  "cacheVariables": {
+    "CMAKE_BUILD_TYPE": "Debug",
+    "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/debug-spdlog/conan_toolchain.cmake",
+    "PGO_ENABLE_SPDLOG": "ON"
+  }
+}
+```
+
+并添加同名 build preset 和 test preset。
+
+- [ ] **Step 4: 实现 `SpdlogSink` public header**
+
+`include/pgo/log/spdlog_sink.hpp`:
+
+```cpp
+#pragma once
+
+#if defined(PGO_ENABLE_SPDLOG)
+
+#include "pgo/log/sink.hpp"
+
+#include <memory>
+
+namespace spdlog {
+class logger;
+}
+
+namespace pgo::log {
+
+class SpdlogSink final : public Sink {
+public:
+    explicit SpdlogSink(std::shared_ptr<spdlog::logger> logger);
+
+    void log(Level level, std::string_view logger_name, std::string_view message) override;
+
+private:
+    std::shared_ptr<spdlog::logger> m_logger;
+};
+
+std::shared_ptr<Sink> make_default_spdlog_sink();
+
+} // namespace pgo::log
+
+#endif
+```
+
+- [ ] **Step 5: 实现 `SpdlogSink` source**
+
+`src/log/spdlog_sink.cpp`:
+
+```cpp
+#include "pgo/log/spdlog_sink.hpp"
+
+#if defined(PGO_ENABLE_SPDLOG)
+
+#include <spdlog/sinks/stderr_color_sinks.h>
+#include <spdlog/spdlog.h>
+
+#include <utility>
+
+namespace pgo::log {
+
+namespace {
+
+[[nodiscard]] spdlog::level::level_enum to_spdlog_level(Level level) {
+    switch (level) {
+    case Level::trace:
+        return spdlog::level::trace;
+    case Level::debug:
+        return spdlog::level::debug;
+    case Level::info:
+        return spdlog::level::info;
+    case Level::warn:
+        return spdlog::level::warn;
+    case Level::error:
+        return spdlog::level::err;
+    case Level::off:
+        return spdlog::level::off;
+    }
+    return spdlog::level::info;
+}
+
+} // namespace
+
+SpdlogSink::SpdlogSink(std::shared_ptr<spdlog::logger> logger)
+    : m_logger{std::move(logger)} {}
+
+void SpdlogSink::log(Level level, std::string_view logger_name, std::string_view message) {
+    m_logger->log(to_spdlog_level(level), "[{}] {}", logger_name, message);
+}
+
+std::shared_ptr<Sink> make_default_spdlog_sink() {
+    return std::make_shared<SpdlogSink>(spdlog::stderr_color_mt("pgo"));
+}
+
+} // namespace pgo::log
+
+#endif
+```
+
+- [ ] **Step 6: Wire spdlog source and compile definition**
+
+`src/log/CMakeLists.txt`:
+
+```cmake
+if(PGO_ENABLE_SPDLOG)
+    target_sources(pgo_log PRIVATE spdlog_sink.cpp)
+    target_compile_definitions(pgo_log PUBLIC PGO_ENABLE_SPDLOG)
+    target_link_libraries(pgo_log PUBLIC spdlog::spdlog)
+endif()
+```
+
+- [ ] **Step 7: 添加 spdlog smoke test**
+
+`tests/log/test_spdlog_sink.cpp`:
+
+```cpp
+#include "pgo/log/spdlog_sink.hpp"
+
+#include <gtest/gtest.h>
+
+namespace pgo::log::test {
+
+TEST(SpdlogSink, DefaultSinkCanLog) {
+#if defined(PGO_ENABLE_SPDLOG)
+    auto sink = make_default_spdlog_sink();
+    ASSERT_NE(nullptr, sink);
+    EXPECT_NO_THROW(sink->log(Level::info, "pgo.spdlog.test", "hello"));
+#else
+    GTEST_SKIP() << "PGO_ENABLE_SPDLOG is disabled";
+#endif
+}
+
+} // namespace pgo::log::test
+```
+
+在 `tests/CMakeLists.txt` 追加：
+
+```cmake
+if(PGO_ENABLE_SPDLOG)
+    target_sources(pgo_log_tests PRIVATE log/test_spdlog_sink.cpp)
+endif()
+```
+
+- [ ] **Step 8: 运行 spdlog 构建验证**
+
+```bash
+conan install . \
+  --profile:host=conan/profiles/default \
+  --profile:build=conan/profiles/default \
+  --output-folder=build/conan/debug-spdlog \
+  --build=missing \
+  -s:h build_type=Debug \
+  -o enable_spdlog=True
+
+cmake --preset debug-spdlog
+cmake --build --preset debug-spdlog --target pgo_log_tests
+ctest --preset debug-spdlog -R "Spdlog|Log|Registry|NullSink"
+```
+
+期望：spdlog-enabled log tests 全部通过。
+
+### Task 4.6.6: 在 example/tool/C API bridge 中使用
+
+**文件:**
+- 修改: `examples/CMakeLists.txt`
+- 修改: `examples/mass_spring_cloth.cpp`
+- 修改: `tools/CMakeLists.txt`
+- 修改: `tools/obj_frames_to_abc.cpp`
+- 修改: `src/c_api/CMakeLists.txt`（Phase 6 创建后）
+- 修改: `src/c_api/pgo_c.cpp`（Phase 6 创建后）
+
+- [ ] **Step 1: example 链接 `pgo::log`**
+
+`examples/CMakeLists.txt` 中让 `pgo_mass_spring_cloth` 链接：
+
+```cmake
+target_link_libraries(pgo_mass_spring_cloth
+    PRIVATE
+        pgo::core
+        pgo::io
+        pgo::log
+        CLI11::CLI11
+)
+```
+
+- [ ] **Step 2: cloth example 使用 named logger**
+
+`examples/mass_spring_cloth.cpp` 加入：
+
+```cpp
+#include "pgo/log/registry.hpp"
+```
+
+在 `main` 中创建：
+
+```cpp
+auto log = pgo::log::get("pgo.example.cloth");
+log.info(std::format("writing {} frames to {}", opts.frames, opts.output.string()));
+```
+
+每帧 solver 结果使用 logger：
+
+```cpp
+log.info(std::format(
+    "frame={} status={} iterations={} value={} grad_norm={}",
+    step + 1,
+    pgo::solver::status_name(result.status),
+    result.solver_iterations,
+    result.final_value,
+    result.final_gradient_norm));
+```
+
+遇到 failure 时使用 `log.error(...)` 后返回非零状态；不要在 solver/integrator 内部打日志。
+
+- [ ] **Step 3: Alembic tool 使用 named logger**
+
+`tools/CMakeLists.txt`:
+
+```cmake
+target_link_libraries(pgo_obj_frames_to_abc PRIVATE CLI11::CLI11 Alembic::Alembic pgo::log)
+```
+
+`tools/obj_frames_to_abc.cpp` 中使用：
+
+```cpp
+auto log = pgo::log::get("pgo.tool.obj_frames_to_abc");
+log.info(std::format("frames={}, fps={}, output={}", frames.size(), fps, output.string()));
+```
+
+- [ ] **Step 4: C API bridge 内部使用 logging，但 public header 不暴露 logging**
+
+Phase 6 创建 `src/c_api/pgo_c.cpp` 后，可以在 catch block 中使用：
+
+```cpp
+auto log = pgo::log::get("pgo.c_api");
+log.error(std::format("pgo_world_create_mass_spring failed: {}", e.what()));
+```
+
+要求：
+
+- `include/pgo_c/pgo.h` 不 include `pgo/log`。
+- C ABI 仍然只通过 `pgo_status_t` + `pgo_error_t` 返回错误。
+- shared library exported symbols 仍然只暴露 `pgo_*` C API。
+
+### Task 4.6.7: 添加边界检查
+
+**文件:**
+- 修改: `.github/workflows/ci.yml`
+- 修改: `README.md`
+
+- [ ] **Step 1: 本地检查 core numerical modules 不 include logging**
+
+```bash
+rg "pgo/log|spdlog" \
+  include/pgo/base \
+  include/pgo/math \
+  include/pgo/storage \
+  include/pgo/geometry \
+  include/pgo/dof \
+  include/pgo/assembly \
+  include/pgo/energy \
+  include/pgo/solver \
+  include/pgo/integrator
+```
+
+期望：无匹配。
+
+- [ ] **Step 2: 默认无 spdlog 构建**
+
+```bash
+conan install . \
+  --profile:host=conan/profiles/default \
+  --profile:build=conan/profiles/default \
+  --output-folder=build/conan/debug \
+  --build=missing \
+  -s:h build_type=Debug
+
+cmake --preset debug
+cmake --build --preset debug
+ctest --preset debug -R "Log|Registry|NullSink"
+```
+
+- [ ] **Step 3: README 记录 logging 边界**
+
+添加：
+
+```markdown
+## Logging
+
+`pgo::log` is a lightweight facade for application boundaries: examples, tools,
+and the C API bridge. The numerical core does not link to logging and reports
+structured status instead. spdlog is optional and only enabled with
+`PGO_ENABLE_SPDLOG=ON` plus the matching Conan option `enable_spdlog=True`.
+```
+
 ## Phase 5: Example Simulation 和 OBJ Frame Pipeline
 
-**当前状态:** Task 5.1 已完成（`ConstantForceEnergy` + `status_name`）。Task 5.2-5.4 待实现。
+**当前状态:** Task 5.1 已完成（`ConstantForceEnergy` + `status_name`）。Task 5.2-5.4 待实现。Phase 4.6 完成后，example 输出统一使用 `pgo::log`。
 
 **Phase 5 目标:** 把 Phase 0-4 的架构用一个可视化 example 压一遍。Phase 5 应该消费现有 core/integrator，不新增 simulation world、runtime polymorphism、material system、bending/collision/contact 或 GPU path。允许新增的 core 组件仅限后续 Phase 6/C API 也会复用的小型 full energy / status helper。
 
@@ -2890,13 +3801,13 @@ target_link_libraries(pgo_mass_spring_cloth PRIVATE pgo::core pgo::io CLI11::CLI
 ```cpp
 const auto result = integrator.step(...);
 if (result.status != pgo::solver::SolverStatus::converged) {
-    std::cerr << std::format(
+    log.error(std::format(
         "Frame {} failed: status={}, iterations={}, value={}, grad_norm={}\n",
         frame,
         pgo::solver::status_name(result.status),
         result.solver_iterations,
         result.final_value,
-        result.final_gradient_norm);
+        result.final_gradient_norm));
     return 2;
 }
 ```
@@ -2905,7 +3816,7 @@ if (result.status != pgo::solver::SolverStatus::converged) {
 
 - Example 遇到 solver failure 直接打印并停止，不静默继续。
 - `BackwardEuler` 默认只在 converged 时 commit state；failure 时 example 不应写出半失败状态。
-- 打印使用 `std::cerr` + `<format>`，不引入 `spdlog`。
+- 打印使用 `pgo::log` + `<format>`；默认 backend 不要求 spdlog。
 
 - [ ] **Step 4: 构建并运行 example**
 
@@ -3451,6 +4362,253 @@ STL types, Eigen types, and template types do not cross this boundary.
 ```
 
 
+## Phase 9: Breaking Core Header Layout Refactor
+
+**当前状态:** 待实现。这个 phase 是 Milestone 1 的最后整理步骤，发生在 Phase 8 GPU-awareness / ABI review gate 之后、进入 Milestone 2 之前。
+
+**Phase 9 目标:** 将 numerical/simulation core 的 public headers 统一迁移到 `include/pgo/core/...`，让 `io`、`log`、`pgo_c` 和 core 的边界在文件系统层面也清晰可见。
+
+**Breaking-change 决策:** 不创建 compatibility headers。旧路径如 `pgo/energy/reduced_energy.hpp`、`pgo/solver/newton_solver.hpp`、`pgo/geometry/rest_mesh.hpp` 在 Phase 9 后直接不存在；所有 repo 内部 include、examples、tests、tools、C API bridge 一次性迁移到 `pgo/core/...`。
+
+最终 public include layout：
+
+```text
+include/pgo/
+  core/
+    assembly/
+    base/
+    dof/
+    energy/
+    geometry/
+    integrator/
+    math/
+    solver/
+    storage/
+  io/
+  log/
+include/pgo_c/
+  export.h
+  pgo.h
+```
+
+设计约束：
+
+- `pgo::core` CMake target 名称保持不变；变化的是 header path，不是 C++ namespace。
+- C++ namespace 仍使用现有 `pgo::math`、`pgo::energy`、`pgo::solver` 等，不额外包一层 `pgo::core` namespace。
+- `include/pgo/io` 和 `include/pgo/log` 保持在 `include/pgo/` 下，不进入 core。
+- `include/pgo_c` 保持 C ABI public header 根目录，不进入 `include/pgo/core`。
+- 不留下旧路径 forwarding headers，避免虚假的双入口 API。
+
+### Task 9.1: 移动 core headers
+
+**文件:**
+- 移动: `include/pgo/base/*` -> `include/pgo/core/base/*`
+- 移动: `include/pgo/math/*` -> `include/pgo/core/math/*`
+- 移动: `include/pgo/storage/*` -> `include/pgo/core/storage/*`
+- 移动: `include/pgo/geometry/*` -> `include/pgo/core/geometry/*`
+- 移动: `include/pgo/dof/*` -> `include/pgo/core/dof/*`
+- 移动: `include/pgo/assembly/*` -> `include/pgo/core/assembly/*`
+- 移动: `include/pgo/energy/*` -> `include/pgo/core/energy/*`
+- 移动: `include/pgo/solver/*` -> `include/pgo/core/solver/*`
+- 移动: `include/pgo/integrator/*` -> `include/pgo/core/integrator/*`
+
+- [ ] **Step 1: 创建 core 目录并移动 headers**
+
+```bash
+mkdir -p include/pgo/core
+git mv include/pgo/base include/pgo/core/base
+git mv include/pgo/math include/pgo/core/math
+git mv include/pgo/storage include/pgo/core/storage
+git mv include/pgo/geometry include/pgo/core/geometry
+git mv include/pgo/dof include/pgo/core/dof
+git mv include/pgo/assembly include/pgo/core/assembly
+git mv include/pgo/energy include/pgo/core/energy
+git mv include/pgo/solver include/pgo/core/solver
+git mv include/pgo/integrator include/pgo/core/integrator
+```
+
+期望：`include/pgo/` 下只剩 `core/`、`io/`、`log/`；旧 core header directories 不存在。
+
+- [ ] **Step 2: 确认没有 compatibility headers**
+
+```bash
+test ! -d include/pgo/base
+test ! -d include/pgo/math
+test ! -d include/pgo/storage
+test ! -d include/pgo/geometry
+test ! -d include/pgo/dof
+test ! -d include/pgo/assembly
+test ! -d include/pgo/energy
+test ! -d include/pgo/solver
+test ! -d include/pgo/integrator
+```
+
+期望：全部 exit 0。不要创建 `include/pgo/energy/foo.hpp` 这种 forwarding header。
+
+### Task 9.2: 更新 include paths
+
+**文件:**
+- 修改: `include/pgo/core/**/*.hpp`
+- 修改: `include/pgo/io/*.hpp`
+- 修改: `src/**/*.cpp`
+- 修改: `examples/**/*.cpp`
+- 修改: `tests/**/*.cpp`
+- 修改: `tools/**/*.cpp`
+
+- [ ] **Step 1: 批量替换 core include 前缀**
+
+将以下 include：
+
+```cpp
+#include "pgo/base/
+#include "pgo/math/
+#include "pgo/storage/
+#include "pgo/geometry/
+#include "pgo/dof/
+#include "pgo/assembly/
+#include "pgo/energy/
+#include "pgo/solver/
+#include "pgo/integrator/
+```
+
+替换为：
+
+```cpp
+#include "pgo/core/base/
+#include "pgo/core/math/
+#include "pgo/core/storage/
+#include "pgo/core/geometry/
+#include "pgo/core/dof/
+#include "pgo/core/assembly/
+#include "pgo/core/energy/
+#include "pgo/core/solver/
+#include "pgo/core/integrator/
+```
+
+要求：`pgo/io/...`、`pgo/log/...`、`pgo_c/...` include 不改。
+
+- [ ] **Step 2: 检查旧 core include 不再出现**
+
+```bash
+rg '#include "pgo/(base|math|storage|geometry|dof|assembly|energy|solver|integrator)/' include src examples tests tools
+```
+
+期望：无匹配。
+
+- [ ] **Step 3: 检查新 include path 覆盖 core modules**
+
+```bash
+rg '#include "pgo/core/(base|math|storage|geometry|dof|assembly|energy|solver|integrator)/' include src examples tests tools
+```
+
+期望：能看到 core modules 的内部和调用侧 include。
+
+### Task 9.3: 更新 CMake / docs / plan references
+
+**文件:**
+- 修改: `README.md`
+- 修改: `plan/milestion1_mass_spring_cpu.plan.md`
+- 修改: `.github/workflows/ci.yml`（如有 hardcoded path check）
+- 修改: 任何包含旧 include path 示例的文档
+
+- [ ] **Step 1: 更新 README include 示例和架构说明**
+
+README 中记录：
+
+```markdown
+## Header Layout
+
+Numerical and simulation headers live under `include/pgo/core/`. Boundary modules
+remain outside core: `include/pgo/io/`, `include/pgo/log/`, and `include/pgo_c/`.
+Milestone 1 intentionally made this as a breaking include-path change and does
+not provide compatibility forwarding headers.
+```
+
+- [ ] **Step 2: 更新 plan 中的 path checks**
+
+将 plan 里的 core path 检查从：
+
+```bash
+include/pgo/geometry include/pgo/storage
+include/pgo/energy include/pgo/assembly
+include/pgo/base include/pgo/math ...
+```
+
+改成：
+
+```bash
+include/pgo/core/geometry include/pgo/core/storage
+include/pgo/core/energy include/pgo/core/assembly
+include/pgo/core/base include/pgo/core/math ...
+```
+
+`include/pgo/io`、`include/pgo/log`、`include/pgo_c` 保持原路径。
+
+- [ ] **Step 3: 检查文档中没有旧 public include path 示例**
+
+```bash
+rg 'pgo/(base|math|storage|geometry|dof|assembly|energy|solver|integrator)/' README.md plan .github
+```
+
+期望：除非是在 Phase 9 migration 说明的 “旧路径” 示例中，否则无匹配。
+
+### Task 9.4: 构建验证 breaking layout
+
+**文件:**
+- 修改: `compile_commands.json`（由构建生成，不手动编辑）
+
+- [ ] **Step 1: 重新 configure/build debug**
+
+```bash
+cmake --preset debug
+cmake --build --preset debug
+ctest --preset debug
+```
+
+期望：所有 targets 和 tests 通过。
+
+- [ ] **Step 2: 运行 ASan/UBSan**
+
+```bash
+cmake --preset asan
+cmake --build --preset asan
+ctest --preset asan
+```
+
+期望：ASan/UBSan tests 通过。
+
+- [ ] **Step 3: 运行 boundary checks**
+
+```bash
+rg "pgo/log|spdlog" \
+  include/pgo/core/base \
+  include/pgo/core/math \
+  include/pgo/core/storage \
+  include/pgo/core/geometry \
+  include/pgo/core/dof \
+  include/pgo/core/assembly \
+  include/pgo/core/energy \
+  include/pgo/core/solver \
+  include/pgo/core/integrator
+```
+
+期望：无匹配。
+
+```bash
+rg "std::vector<.*Eigen|Eigen::Vector[234]|Eigen::Matrix<.*Dynamic" include/pgo/core/geometry include/pgo/core/storage
+```
+
+期望：无匹配，除了 `include/pgo/core/math` 中允许的 math aliases。
+
+- [ ] **Step 4: 运行 example smoke test**
+
+```bash
+cmake --build --preset debug --target pgo_mass_spring_cloth
+./build/debug/examples/pgo_mass_spring_cloth --frames 5 --resolution 8 --output output/phase9-smoke
+```
+
+期望：写出 `output/phase9-smoke/frame_0000.obj` 到 `frame_0004.obj`。
+
 ## Milestone 1 完成标准
 
 - `cmake --preset debug` 在 Conan 依赖安装后成功。
@@ -3463,9 +4621,13 @@ STL types, Eigen types, and template types do not cross this boundary.
 - OBJ frame output 写出 `X + u`。
 - Mesh/geometry storage 保持 flat、index-based。
 - Energy model/provider 暴露 local contribution API，适合 CPU assembly 和未来 GPU dispatch。
+- `pgo::log` facade 默认无 spdlog 依赖，`pgo_log_tests` 通过；`pgo::core` 不 link `pgo::log`。
+- `PGO_ENABLE_SPDLOG=ON` 且 Conan `enable_spdlog=True` 时，`SpdlogSink` 可构建并通过 smoke test。
 - `pgo_c` 构建为 shared library，并通过 selected concrete C++ template instantiations 暴露 C99 ABI。
 - `include/pgo_c/pgo.h` 能作为 C 编译，不暴露 STL、Eigen、C++ templates、exceptions、namespaces 或 C++ classes。
 - C API ownership/error 规则明确：handles 由 matching destroy functions 释放，descriptors 是 borrowed，错误通过 `pgo_status_t` + `pgo_error_t` 返回。
+- Core headers 位于 `include/pgo/core/...`；`include/pgo/base`、`math`、`storage`、`geometry`、`dof`、`assembly`、`energy`、`solver`、`integrator` 这些旧路径不存在。
+- Repo 内部不再 include 旧 core paths；不提供 compatibility forwarding headers。
 - `PGO_ENABLE_EIGEN_ACCELERATION=OFF` 默认构建通过；打开后 Apple 可走 Accelerate，Ubuntu/Windows 可在 oneMKL 可用时走 MKL。
 - PARDISO 被记录为 future linear solver backend，而不是 Eigen `MathBackend` 或 Eigen acceleration 开关的一部分。
 - GitHub Actions CPU build/test jobs 在 Ubuntu、macOS、Windows 三个平台通过；Ubuntu ASan/UBSan job 通过。
@@ -3479,13 +4641,16 @@ STL types, Eigen types, and template types do not cross this boundary.
 4. 完成 Phase 2，尽早获得可视化输出能力。
 5. 完成 Phase 3，用 derivative tests 保护 energy 实现。
 6. 完成 Phase 4，先用 quadratic system 验证 solver，再跑 mass-spring。
-7. 完成 Phase 5，生成 OBJ frames。
-8. 完成 Phase 6，暴露稳定的 C99 shared-library facade。
-9. 完成 Phase 7 和 Phase 8 后，再进入 Milestone 2 GPU backend。
+7. 完成 Phase 4.6，补上 `pgo::log` facade，让 Phase 5 example/tool 和 Phase 6 C API bridge 使用统一日志边界。
+8. 完成 Phase 5，生成 OBJ frames。
+9. 完成 Phase 6，暴露稳定的 C99 shared-library facade。
+10. 完成 Phase 7 和 Phase 8，收紧 CI、GPU-aware 和 ABI review gate。
+11. 完成 Phase 9，执行 breaking core header layout refactor，不保留旧 include compatibility headers。
+12. 完成 Milestone 1 后，再进入 Milestone 2 GPU backend。
 
 ## 自检记录
 
-- 覆盖范围：计划覆盖 build system、CI、Eigen acceleration 配置、C++23 header-oriented core、Eigen backend layer、GPU-aware storage、rest/displacement 分离、DOF reduction、OBJ input/output、local energy model/provider assembly、mass-spring energy、Newton solver、example frames、C99 dynamic-library API、Alembic 后处理。
+- 覆盖范围：计划覆盖 build system、CI、Eigen acceleration 配置、C++23 header-oriented core、breaking core header layout、Eigen backend layer、GPU-aware storage、rest/displacement 分离、DOF reduction、OBJ input/output、local energy model/provider assembly、mass-spring energy、Newton solver、`pgo::log` facade、example frames、C99 dynamic-library API、Alembic 后处理。
 - 占位扫描：计划不包含 `TBD`、`TODO`、`implement later` 等未落实占位。
-- 类型一致性：核心名称统一使用 `RestMesh`、`DofLayout`、`Displacement`、`DirichletBoundary`、`ReducedDofMap`、`MassSpringLocalEnergyModel`、`MassSpringLocalEnergyProvider`、`ReducedEnergyView`、`ObjFrameWriter3d`、`NewtonSolver`、`pgo_world_t`、`pgo_error_t`。
+- 类型一致性：核心名称统一使用 `RestMesh`、`DofLayout`、`Displacement`、`DirichletBoundary`、`ReducedDofMap`、`MassSpringLocalEnergyModel`、`MassSpringLocalEnergyProvider`、`ReducedEnergyView`、`ObjFrameWriter3d`、`NewtonSolver`、`pgo::log::Registry`、`pgo::log::Logger`、`pgo::log::Sink`、`pgo_world_t`、`pgo_error_t`。
 - 范围控制：Vulkan、Slang、FEM、contact、IPC、GPU solvers 不进入 Milestone 1，但数据布局和 API 边界保持兼容。
