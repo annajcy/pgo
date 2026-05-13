@@ -14,29 +14,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        preset:
-          - debug
-          - debug-asan
-          - debug-all
-          - debug-accel
-          - debug-accel-all
         include:
-          - os: ubuntu-latest
-            profile: conan/profiles/ubuntu-x86_64-gcc
-            cc: gcc-13
-            cxx: g++-13
-          - os: macos-latest
-            profile: conan/profiles/macos-arm64-apple-clang
-            cc: cc
-            cxx: c++
-          - os: windows-latest
-            profile: conan/profiles/windows-x86_64-msvc
-            cc: cl
-            cxx: cl
+          - { os: ubuntu-latest, preset: debug,               profile: conan/profiles/ubuntu-x86_64-gcc,     cc: gcc-13, cxx: g++-13 }
+          - { os: ubuntu-latest, preset: debug-asan,           profile: conan/profiles/ubuntu-x86_64-gcc,     cc: gcc-13, cxx: g++-13 }
+          - { os: ubuntu-latest, preset: debug-all,            profile: conan/profiles/ubuntu-x86_64-gcc,     cc: gcc-13, cxx: g++-13 }
+          - { os: ubuntu-latest, preset: debug-accel,          profile: conan/profiles/ubuntu-x86_64-gcc,     cc: gcc-13, cxx: g++-13 }
+          - { os: ubuntu-latest, preset: debug-accel-all,      profile: conan/profiles/ubuntu-x86_64-gcc,     cc: gcc-13, cxx: g++-13 }
+          - { os: macos-latest,   preset: debug,               profile: conan/profiles/macos-arm64-apple-clang, cc: cc,    cxx: c++ }
+          - { os: macos-latest,   preset: debug-asan,           profile: conan/profiles/macos-arm64-apple-clang, cc: cc,    cxx: c++ }
+          - { os: macos-latest,   preset: debug-all,            profile: conan/profiles/macos-arm64-apple-clang, cc: cc,    cxx: c++ }
+          - { os: macos-latest,   preset: debug-accel,          profile: conan/profiles/macos-arm64-apple-clang, cc: cc,    cxx: c++ }
+          - { os: macos-latest,   preset: debug-accel-all,      profile: conan/profiles/macos-arm64-apple-clang, cc: cc,    cxx: c++ }
+          - { os: windows-latest, preset: debug,               profile: conan/profiles/windows-x86_64-msvc,    cc: cl,    cxx: cl }
+          - { os: windows-latest, preset: debug-asan,           profile: conan/profiles/windows-x86_64-msvc,    cc: cl,    cxx: cl }
+          - { os: windows-latest, preset: debug-all,            profile: conan/profiles/windows-x86_64-msvc,    cc: cl,    cxx: cl }
+          - { os: windows-latest, preset: debug-accel,          profile: conan/profiles/windows-x86_64-msvc,    cc: cl,    cxx: cl }
+          - { os: windows-latest, preset: debug-accel-all,      profile: conan/profiles/windows-x86_64-msvc,    cc: cl,    cxx: cl }
     steps:
       - uses: actions/checkout@v4
-
-      - uses: lukka/get-cmake@latest
 
       - name: Set up MSVC
         if: runner.os == 'Windows'
@@ -51,8 +46,12 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v6
 
-      - name: Install Conan
-        run: uv tool install conan
+      - name: Install tools
+        run: |
+          uv tool install cmake
+          uv tool install ninja
+          uv tool install conan
+          uv sync
 
       - name: Install oneMKL (Linux)
         if: contains(matrix.preset, 'accel') && runner.os == 'Linux'
@@ -81,26 +80,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        preset:
-          - release
-          - release-accel
         include:
-          - os: ubuntu-latest
-            profile: conan/profiles/ubuntu-x86_64-gcc
-            cc: gcc-13
-            cxx: g++-13
-          - os: macos-latest
-            profile: conan/profiles/macos-arm64-apple-clang
-            cc: cc
-            cxx: c++
-          - os: windows-latest
-            profile: conan/profiles/windows-x86_64-msvc
-            cc: cl
-            cxx: cl
+          - { os: ubuntu-latest, preset: release,        profile: conan/profiles/ubuntu-x86_64-gcc,     cc: gcc-13, cxx: g++-13 }
+          - { os: ubuntu-latest, preset: release-accel,   profile: conan/profiles/ubuntu-x86_64-gcc,     cc: gcc-13, cxx: g++-13 }
+          - { os: macos-latest,   preset: release,        profile: conan/profiles/macos-arm64-apple-clang, cc: cc,    cxx: c++ }
+          - { os: macos-latest,   preset: release-accel,   profile: conan/profiles/macos-arm64-apple-clang, cc: cc,    cxx: c++ }
+          - { os: windows-latest, preset: release,        profile: conan/profiles/windows-x86_64-msvc,    cc: cl,    cxx: cl }
+          - { os: windows-latest, preset: release-accel,   profile: conan/profiles/windows-x86_64-msvc,    cc: cl,    cxx: cl }
     steps:
       - uses: actions/checkout@v4
-
-      - uses: lukka/get-cmake@latest
 
       - name: Set up MSVC
         if: runner.os == 'Windows'
@@ -115,8 +103,12 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v6
 
-      - name: Install Conan
-        run: uv tool install conan
+      - name: Install tools
+        run: |
+          uv tool install cmake
+          uv tool install ninja
+          uv tool install conan
+          uv sync
 
       - name: Install oneMKL (Linux)
         if: contains(matrix.preset, 'accel') && runner.os == 'Linux'

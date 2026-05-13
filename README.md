@@ -11,8 +11,9 @@
 Use uv for Python-managed tooling:
 
 ```bash
-uv tool install conan
+uv tool install cmake
 uv tool install ninja
+uv tool install conan
 ```
 
 After cloning, sync the project's Python environment (installs the `pgo-configure` entry point):
