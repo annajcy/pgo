@@ -16,3 +16,7 @@ endif()
 if(PGO_BUILD_BENCHMARKS)
     find_package(benchmark REQUIRED CONFIG)
 endif()
+
+if(PGO_ENABLE_SPDLOG)
+    find_package(spdlog CONFIG REQUIRED)
+endif()

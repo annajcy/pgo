@@ -8,12 +8,10 @@
 namespace pgo::log {
 
 class Registry {
-    std::shared_ptr<Sink> m_sink;
-    Level m_threshold;
-    
 public:
     Registry();
-    explicit Registry(std::shared_ptr<Sink> sink, Level threshold = Level::info);
+    explicit Registry(std::shared_ptr<Sink> sink, Level threshold = Level::info,
+                      std::string root_name = "pgo");
 
     // with default level (inherits Registry's m_threshold)
     [[nodiscard]] Logger root() const;
@@ -25,6 +23,12 @@ public:
 
     void set_sink(std::shared_ptr<Sink> sink);
     void set_level(Level threshold);
+    void set_root_name(std::string name);
+
+private:
+    std::shared_ptr<Sink> m_sink;
+    Level m_threshold;
+    std::string m_root_name;
 };
 
 Registry& default_registry();

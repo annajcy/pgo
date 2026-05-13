@@ -69,6 +69,17 @@
         "PGO_ENABLE_EIGEN_ACCELERATION": "ON",
         "PGO_EIGEN_ACCELERATION_BACKEND": "AUTO"
       }
+    },
+    {
+      "name": "debug-spdlog",
+      "displayName": "Debug spdlog",
+      "inherits": "base",
+      "binaryDir": "${sourceDir}/build/debug-spdlog",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/debug-spdlog/conan_toolchain.cmake",
+        "PGO_ENABLE_SPDLOG": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -91,6 +102,10 @@
     {
       "name": "release-acceleration",
       "configurePreset": "release-acceleration"
+    },
+    {
+      "name": "debug-spdlog",
+      "configurePreset": "debug-spdlog"
     }
   ],
   "testPresets": [
@@ -118,6 +133,13 @@
     {
       "name": "release-acceleration",
       "configurePreset": "release-acceleration",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "debug-spdlog",
+      "configurePreset": "debug-spdlog",
       "output": {
         "outputOnFailure": true
       }

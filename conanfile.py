@@ -8,6 +8,13 @@ class PgoRecipe(ConanFile):
     package_type = "header-library"
     settings = "os", "compiler", "build_type", "arch"
 
+    options = {
+        "enable_spdlog": [True, False],
+    }
+    default_options = {
+        "enable_spdlog": False,
+    }
+
     def generate(self):
         deps = CMakeDeps(self)
         deps.generate()
@@ -21,6 +28,8 @@ class PgoRecipe(ConanFile):
         self.requires("cli11/[>=2.4 <3]")
         self.requires("tinyobjloader/2.0.0-rc10", options={"double": True})
         self.requires("alembic/1.8.8")
+        if self.options.enable_spdlog:
+            self.requires("spdlog/[>=1.14 <2]")
 
     def build_requirements(self):
         self.test_requires("benchmark/[>=1.9 <2]")

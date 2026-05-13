@@ -29,3 +29,29 @@ target_link_libraries(pgo_tests
 )
 
 gtest_discover_tests(pgo_tests)
+
+add_executable(pgo_log_tests
+    log/test_log.cpp
+)
+
+target_link_libraries(pgo_log_tests
+    PRIVATE
+        pgo::log
+        GTest::gtest_main
+)
+
+gtest_discover_tests(pgo_log_tests)
+
+if(PGO_ENABLE_SPDLOG)
+    add_executable(pgo_spdlog_tests
+        log/test_spdlog_sink.cpp
+    )
+
+    target_link_libraries(pgo_spdlog_tests
+        PRIVATE
+            pgo::log
+            GTest::gtest_main
+    )
+
+    gtest_discover_tests(pgo_spdlog_tests)
+endif()

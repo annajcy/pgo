@@ -6,14 +6,15 @@
 namespace pgo::log {
 
 Registry::Registry()
-    : Registry{std::make_shared<StderrSink>(), Level::info} {}
+    : Registry{std::make_shared<StderrSink>(), Level::info, "pgo"} {}
 
-Registry::Registry(std::shared_ptr<Sink> sink, Level threshold)
+Registry::Registry(std::shared_ptr<Sink> sink, Level threshold, std::string root_name)
     : m_sink{std::move(sink)},
-      m_threshold{threshold} {}
+      m_threshold{threshold},
+      m_root_name{std::move(root_name)} {}
 
 Logger Registry::root() const {
-    return get("pgo");
+    return get(m_root_name);
 }
 
 Logger Registry::get(std::string_view name) const {
@@ -34,6 +35,10 @@ void Registry::set_sink(std::shared_ptr<Sink> sink) {
 
 void Registry::set_level(Level threshold) {
     m_threshold = threshold;
+}
+
+void Registry::set_root_name(std::string name) {
+    m_root_name = std::move(name);
 }
 
 Registry& default_registry() {

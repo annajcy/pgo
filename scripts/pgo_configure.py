@@ -14,6 +14,12 @@ from typing import Any, Optional
 
 DEFAULT_PROFILE = pathlib.Path("conan/profiles/default")
 
+# Map CMake cache variable names to (conan_option_name, mapping of CMake value -> Conan value).
+# Only variables listed here are forwarded to conan install as -o:h <option>=<value>.
+CMAKE_TO_CONAN_OPTIONS: dict[str, tuple[str, dict[str, str]]] = {
+    "PGO_ENABLE_SPDLOG": ("enable_spdlog", {"ON": "True", "OFF": "False"}),
+}
+
 
 @dataclass(frozen=True)
 class ConfigurePlan:
@@ -126,6 +132,17 @@ def create_plan(
     if build_missing:
         conan_command.append("--build=missing")
     conan_command.extend(["-s:h", f"build_type={build_type}"])
+
+    for cmake_var, (conan_option, value_map) in CMAKE_TO_CONAN_OPTIONS.items():
+        cmake_value = cache_variables.get(cmake_var)
+        if cmake_value is not None:
+            conan_value = value_map.get(cmake_value)
+            if conan_value is None:
+                raise ValueError(
+                    f"preset '{preset_name}' has {cmake_var}={cmake_value}, "
+                    f"but expected one of {list(value_map.keys())}"
+                )
+            conan_command.extend(["-o:h", f"{conan_option}={conan_value}"])
 
     cmake_command = ["cmake", "--preset", preset_name]
     return ConfigurePlan(
