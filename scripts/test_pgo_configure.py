@@ -32,7 +32,7 @@ class PgoConfigureTest(unittest.TestCase):
     def test_asan_reuses_debug_conan_folder(self) -> None:
         plan = pgo_configure.create_plan(
             repo_root=REPO_ROOT,
-            preset_name="asan",
+            preset_name="debug-asan",
             host_profile=None,
             build_profile=None,
             build_missing=True,
@@ -44,7 +44,7 @@ class PgoConfigureTest(unittest.TestCase):
     def test_profile_override_applies_to_host_and_build(self) -> None:
         plan = pgo_configure.create_plan(
             repo_root=REPO_ROOT,
-            preset_name="debug-acceleration",
+            preset_name="debug-accel",
             host_profile=pathlib.Path("conan/profiles/macos-arm64-apple-clang"),
             build_profile=None,
             build_missing=False,
@@ -53,7 +53,7 @@ class PgoConfigureTest(unittest.TestCase):
         expected_profile = REPO_ROOT / "conan/profiles/macos-arm64-apple-clang"
         self.assertEqual(plan.host_profile, expected_profile)
         self.assertEqual(plan.build_profile, expected_profile)
-        self.assertEqual(plan.output_folder, REPO_ROOT / "build/conan/debug-acceleration")
+        self.assertEqual(plan.output_folder, REPO_ROOT / "build/conan/debug-accel")
         self.assertNotIn("--build=missing", plan.conan_command)
 
 

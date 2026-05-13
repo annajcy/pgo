@@ -31,6 +31,7 @@ class ConfigurePlan:
     build_profile: pathlib.Path
     conan_command: list[str]
     cmake_command: list[str]
+    cmake_build_command: list[str]
 
 
 def repo_root_from_script() -> pathlib.Path:
@@ -152,6 +153,7 @@ def create_plan(
             conan_command.extend(["-o:h", f"{conan_option}={conan_value}"])
 
     cmake_command = ["cmake", "--preset", preset_name]
+    cmake_build_command = ["cmake", "--build", "--preset", preset_name]
     return ConfigurePlan(
         preset_name=preset_name,
         build_type=build_type,
@@ -160,6 +162,7 @@ def create_plan(
         build_profile=resolved_build_profile,
         conan_command=conan_command,
         cmake_command=cmake_command,
+        cmake_build_command=cmake_build_command,
     )
 
 
@@ -185,6 +188,7 @@ def run_all_presets(
     build_missing: bool,
     dry_run: bool,
     continue_on_error: bool,
+    build: bool,
 ) -> int:
     preset_names = get_visible_preset_names(repo_root)
     plans: list[ConfigurePlan] = []
@@ -225,6 +229,9 @@ def run_all_presets(
             print_command(plan.conan_command)
         for plan in plans:
             print_command(plan.cmake_command)
+        if build:
+            for plan in plans:
+                print_command(plan.cmake_build_command)
         return 0
 
     # Phase 1: conan install (deduped)
@@ -251,7 +258,20 @@ def run_all_presets(
             else:
                 return error.returncode
 
-    total_failures = conan_failures + cmake_failures
+    # Phase 3: cmake --build --preset (all)
+    build_failures = 0
+    if build:
+        for plan in plans:
+            try:
+                run_command(plan.cmake_build_command, repo_root)
+            except subprocess.CalledProcessError as error:
+                print(f"cmake build failed for {plan.preset_name}: {error}", file=sys.stderr)
+                if continue_on_error:
+                    build_failures += 1
+                else:
+                    return error.returncode
+
+    total_failures = conan_failures + cmake_failures + build_failures
     if total_failures > 0:
         print(f"{total_failures} failure(s), {len(plans)} preset(s) total", file=sys.stderr)
         return 1
@@ -293,6 +313,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="Keep going if a conan install or cmake preset fails",
     )
+    parser.add_argument(
+        "--build",
+        action="store_true",
+        help="Run cmake --build --preset after configure",
+    )
     return parser.parse_args(argv)
 
 
@@ -324,6 +349,7 @@ def main(argv: list[str]) -> int:
             build_missing=build_missing,
             dry_run=args.dry_run,
             continue_on_error=args.continue_on_error,
+            build=args.build,
         )
 
     try:
@@ -341,11 +367,15 @@ def main(argv: list[str]) -> int:
     if args.dry_run:
         print_command(plan.conan_command)
         print_command(plan.cmake_command)
+        if args.build:
+            print_command(plan.cmake_build_command)
         return 0
 
     try:
         run_command(plan.conan_command, repo_root)
         run_command(plan.cmake_command, repo_root)
+        if args.build:
+            run_command(plan.cmake_build_command, repo_root)
     except subprocess.CalledProcessError as error:
         return error.returncode
 

@@ -80,7 +80,15 @@ compiler flags and do not change the dependency graph.
 
 ## Quick Start
 
-Configure, build, and run tests with a single wrapper:
+Configure, build, and run tests:
+
+```bash
+uv run pgo-configure debug --build  # install Conan deps + cmake --preset + cmake --build
+ctest --preset debug                # run tests
+```
+
+Without `--build`, only configure runs — useful when you want to inspect or tweak
+before compiling:
 
 ```bash
 uv run pgo-configure debug      # install Conan deps + cmake --preset
@@ -88,19 +96,35 @@ cmake --build --preset debug    # compile
 ctest --preset debug            # run tests
 ```
 
-Choose a different preset to switch configurations:
+Choose a different preset to switch configurations.
+Configure only:
 
 ```bash
-uv run pgo-configure release              # release build
-uv run pgo-configure debug-asan           # debug + sanitizers
-uv run pgo-configure debug-all            # debug + spdlog + Alembic
-uv run pgo-configure debug-accel          # debug + Eigen acceleration
+uv run pgo-configure release
+uv run pgo-configure debug-asan
+uv run pgo-configure debug-all
+uv run pgo-configure debug-accel
 ```
 
-Or configure every visible preset at once:
+Or configure + build in one step with `--build`:
+
+```bash
+uv run pgo-configure release --build
+uv run pgo-configure debug-asan --build
+uv run pgo-configure debug-all --build
+uv run pgo-configure debug-accel --build
+```
+
+Configure every visible preset at once:
 
 ```bash
 uv run pgo-configure --all-presets
+```
+
+Add `--build` to compile all of them too:
+
+```bash
+uv run pgo-configure --all-presets --build
 ```
 
 See [Preset Reference](#preset-reference) for the full 16-preset matrix.
@@ -114,6 +138,15 @@ See [Preset Reference](#preset-reference) for the full 16-preset matrix.
 | macOS | Accelerate (built-in) | none |
 | Linux | oneMKL | `scripts/install-onemkl/install-onemkl-linux.sh` |
 | Windows | oneMKL | `.\scripts\install-onemkl\install-onemkl-windows.ps1` |
+
+Configure + build in one step:
+
+```bash
+uv run pgo-configure debug-accel --build
+ctest --preset debug-accel
+```
+
+Or step by step:
 
 ```bash
 uv run pgo-configure debug-accel
