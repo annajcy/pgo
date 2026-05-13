@@ -141,10 +141,18 @@ jobs:
           where.exe mkl_intel_thread.2.dll
           where.exe libiomp5md.dll
 
-      - name: Run benchmark smoke
+      - name: Run benchmark
         if: runner.os != 'Windows'
-        run: ./build/${{ matrix.preset }}/benchmarks/pgo_benchmarks ${{ env.PGO_BENCHMARK_SMOKE_ARGS }}
+        run: |
+          ./build/${{ matrix.preset }}/benchmarks/pgo_benchmarks \
+            --benchmark_format=json \
+            ${{ env.PGO_BENCHMARK_SMOKE_ARGS }} \
+            | uv run python scripts/benchmark_summary.py
 
-      - name: Run benchmark smoke
+      - name: Run benchmark
         if: runner.os == 'Windows'
-        run: .\build\${{ matrix.preset }}\benchmarks\pgo_benchmarks.exe ${{ env.PGO_BENCHMARK_SMOKE_ARGS }}
+        run: |
+          .\build\${{ matrix.preset }}\benchmarks\pgo_benchmarks.exe `
+            --benchmark_format=json `
+            ${{ env.PGO_BENCHMARK_SMOKE_ARGS }} `
+            | uv run python scripts/benchmark_summary.py
