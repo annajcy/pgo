@@ -9,6 +9,11 @@ target_include_directories(pgo_io PUBLIC
     $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(pgo_io
-    PUBLIC pgo::core Alembic::Alembic
+    PUBLIC pgo::core
     PRIVATE tinyobjloader::tinyobjloader_double
 )
+
+if(PGO_ENABLE_ALEMBIC)
+    target_link_libraries(pgo_io PUBLIC Alembic::Alembic)
+    target_compile_definitions(pgo_io PUBLIC PGO_ENABLE_ALEMBIC)
+endif()

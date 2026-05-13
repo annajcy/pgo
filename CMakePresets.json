@@ -16,133 +16,223 @@
       }
     },
     {
+      "name": "dbg",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "rel",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "accel",
+      "hidden": true,
+      "cacheVariables": {
+        "PGO_ENABLE_EIGEN_ACCELERATION": "ON",
+        "PGO_EIGEN_ACCELERATION_BACKEND": "AUTO"
+      }
+    },
+    {
+      "name": "all-opt",
+      "hidden": true,
+      "cacheVariables": {
+        "PGO_ENABLE_SPDLOG": "ON",
+        "PGO_ENABLE_ALEMBIC": "ON"
+      }
+    },
+    {
+      "name": "san",
+      "hidden": true,
+      "cacheVariables": {
+        "PGO_ENABLE_SANITIZERS": "ON"
+      }
+    },
+
+    {
       "name": "debug",
       "displayName": "Debug",
-      "inherits": "base",
+      "inherits": ["base", "dbg"],
       "binaryDir": "${sourceDir}/build/debug",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/debug/conan_toolchain.cmake"
       }
     },
     {
-      "name": "asan",
-      "displayName": "ASan UBSan",
-      "inherits": "base",
-      "binaryDir": "${sourceDir}/build/asan",
+      "name": "debug-accel",
+      "displayName": "Debug + Accel",
+      "inherits": ["base", "dbg", "accel"],
+      "binaryDir": "${sourceDir}/build/debug-accel",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/debug/conan_toolchain.cmake",
-        "PGO_ENABLE_SANITIZERS": "ON"
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/debug-accel/conan_toolchain.cmake"
       }
     },
     {
+      "name": "debug-all",
+      "displayName": "Debug + All",
+      "inherits": ["base", "dbg", "all-opt"],
+      "binaryDir": "${sourceDir}/build/debug-all",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/debug-all/conan_toolchain.cmake"
+      }
+    },
+    {
+      "name": "debug-accel-all",
+      "displayName": "Debug + Accel + All",
+      "inherits": ["base", "dbg", "accel", "all-opt"],
+      "binaryDir": "${sourceDir}/build/debug-accel-all",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/debug-accel-all/conan_toolchain.cmake"
+      }
+    },
+    {
+      "name": "debug-asan",
+      "displayName": "Debug + ASan",
+      "inherits": ["base", "dbg", "san"],
+      "binaryDir": "${sourceDir}/build/debug-asan",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/debug/conan_toolchain.cmake"
+      }
+    },
+    {
+      "name": "debug-accel-asan",
+      "displayName": "Debug + Accel + ASan",
+      "inherits": ["base", "dbg", "accel", "san"],
+      "binaryDir": "${sourceDir}/build/debug-accel-asan",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/debug-accel/conan_toolchain.cmake"
+      }
+    },
+    {
+      "name": "debug-all-asan",
+      "displayName": "Debug + All + ASan",
+      "inherits": ["base", "dbg", "all-opt", "san"],
+      "binaryDir": "${sourceDir}/build/debug-all-asan",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/debug-all/conan_toolchain.cmake"
+      }
+    },
+    {
+      "name": "debug-accel-all-asan",
+      "displayName": "Debug + Accel + All + ASan",
+      "inherits": ["base", "dbg", "accel", "all-opt", "san"],
+      "binaryDir": "${sourceDir}/build/debug-accel-all-asan",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/debug-accel-all/conan_toolchain.cmake"
+      }
+    },
+
+    {
       "name": "release",
       "displayName": "Release",
-      "inherits": "base",
+      "inherits": ["base", "rel"],
       "binaryDir": "${sourceDir}/build/release",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/release/conan_toolchain.cmake"
       }
     },
     {
-      "name": "debug-acceleration",
-      "displayName": "Debug Eigen Acceleration",
-      "inherits": "base",
-      "binaryDir": "${sourceDir}/build/debug-acceleration",
+      "name": "release-accel",
+      "displayName": "Release + Accel",
+      "inherits": ["base", "rel", "accel"],
+      "binaryDir": "${sourceDir}/build/release-accel",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/debug-acceleration/conan_toolchain.cmake",
-        "PGO_ENABLE_EIGEN_ACCELERATION": "ON",
-        "PGO_EIGEN_ACCELERATION_BACKEND": "AUTO"
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/release-accel/conan_toolchain.cmake"
       }
     },
     {
-      "name": "release-acceleration",
-      "displayName": "Release Eigen Acceleration",
-      "inherits": "base",
-      "binaryDir": "${sourceDir}/build/release-acceleration",
+      "name": "release-all",
+      "displayName": "Release + All",
+      "inherits": ["base", "rel", "all-opt"],
+      "binaryDir": "${sourceDir}/build/release-all",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/release-acceleration/conan_toolchain.cmake",
-        "PGO_ENABLE_EIGEN_ACCELERATION": "ON",
-        "PGO_EIGEN_ACCELERATION_BACKEND": "AUTO"
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/release-all/conan_toolchain.cmake"
       }
     },
     {
-      "name": "debug-spdlog",
-      "displayName": "Debug spdlog",
-      "inherits": "base",
-      "binaryDir": "${sourceDir}/build/debug-spdlog",
+      "name": "release-accel-all",
+      "displayName": "Release + Accel + All",
+      "inherits": ["base", "rel", "accel", "all-opt"],
+      "binaryDir": "${sourceDir}/build/release-accel-all",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/debug-spdlog/conan_toolchain.cmake",
-        "PGO_ENABLE_SPDLOG": "ON"
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/release-accel-all/conan_toolchain.cmake"
+      }
+    },
+    {
+      "name": "release-asan",
+      "displayName": "Release + ASan",
+      "inherits": ["base", "rel", "san"],
+      "binaryDir": "${sourceDir}/build/release-asan",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/release/conan_toolchain.cmake"
+      }
+    },
+    {
+      "name": "release-accel-asan",
+      "displayName": "Release + Accel + ASan",
+      "inherits": ["base", "rel", "accel", "san"],
+      "binaryDir": "${sourceDir}/build/release-accel-asan",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/release-accel/conan_toolchain.cmake"
+      }
+    },
+    {
+      "name": "release-all-asan",
+      "displayName": "Release + All + ASan",
+      "inherits": ["base", "rel", "all-opt", "san"],
+      "binaryDir": "${sourceDir}/build/release-all-asan",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/release-all/conan_toolchain.cmake"
+      }
+    },
+    {
+      "name": "release-accel-all-asan",
+      "displayName": "Release + Accel + All + ASan",
+      "inherits": ["base", "rel", "accel", "all-opt", "san"],
+      "binaryDir": "${sourceDir}/build/release-accel-all-asan",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/release-accel-all/conan_toolchain.cmake"
       }
     }
   ],
   "buildPresets": [
-    {
-      "name": "debug",
-      "configurePreset": "debug"
-    },
-    {
-      "name": "asan",
-      "configurePreset": "asan"
-    },
-    {
-      "name": "release",
-      "configurePreset": "release"
-    },
-    {
-      "name": "debug-acceleration",
-      "configurePreset": "debug-acceleration"
-    },
-    {
-      "name": "release-acceleration",
-      "configurePreset": "release-acceleration"
-    },
-    {
-      "name": "debug-spdlog",
-      "configurePreset": "debug-spdlog"
-    }
+    { "name": "debug",               "configurePreset": "debug" },
+    { "name": "debug-accel",         "configurePreset": "debug-accel" },
+    { "name": "debug-all",           "configurePreset": "debug-all" },
+    { "name": "debug-accel-all",     "configurePreset": "debug-accel-all" },
+    { "name": "debug-asan",          "configurePreset": "debug-asan" },
+    { "name": "debug-accel-asan",    "configurePreset": "debug-accel-asan" },
+    { "name": "debug-all-asan",      "configurePreset": "debug-all-asan" },
+    { "name": "debug-accel-all-asan","configurePreset": "debug-accel-all-asan" },
+    { "name": "release",             "configurePreset": "release" },
+    { "name": "release-accel",       "configurePreset": "release-accel" },
+    { "name": "release-all",         "configurePreset": "release-all" },
+    { "name": "release-accel-all",   "configurePreset": "release-accel-all" },
+    { "name": "release-asan",        "configurePreset": "release-asan" },
+    { "name": "release-accel-asan",  "configurePreset": "release-accel-asan" },
+    { "name": "release-all-asan",    "configurePreset": "release-all-asan" },
+    { "name": "release-accel-all-asan","configurePreset": "release-accel-all-asan" }
   ],
   "testPresets": [
-    {
-      "name": "debug",
-      "configurePreset": "debug",
-      "output": {
-        "outputOnFailure": true
-      }
-    },
-    {
-      "name": "asan",
-      "configurePreset": "asan",
-      "output": {
-        "outputOnFailure": true
-      }
-    },
-    {
-      "name": "debug-acceleration",
-      "configurePreset": "debug-acceleration",
-      "output": {
-        "outputOnFailure": true
-      }
-    },
-    {
-      "name": "release-acceleration",
-      "configurePreset": "release-acceleration",
-      "output": {
-        "outputOnFailure": true
-      }
-    },
-    {
-      "name": "debug-spdlog",
-      "configurePreset": "debug-spdlog",
-      "output": {
-        "outputOnFailure": true
-      }
-    }
+    { "name": "debug",               "configurePreset": "debug",               "output": { "outputOnFailure": true } },
+    { "name": "debug-accel",         "configurePreset": "debug-accel",         "output": { "outputOnFailure": true } },
+    { "name": "debug-all",           "configurePreset": "debug-all",           "output": { "outputOnFailure": true } },
+    { "name": "debug-accel-all",     "configurePreset": "debug-accel-all",     "output": { "outputOnFailure": true } },
+    { "name": "debug-asan",          "configurePreset": "debug-asan",          "output": { "outputOnFailure": true } },
+    { "name": "debug-accel-asan",    "configurePreset": "debug-accel-asan",    "output": { "outputOnFailure": true } },
+    { "name": "debug-all-asan",      "configurePreset": "debug-all-asan",      "output": { "outputOnFailure": true } },
+    { "name": "debug-accel-all-asan","configurePreset": "debug-accel-all-asan","output": { "outputOnFailure": true } },
+    { "name": "release",             "configurePreset": "release",             "output": { "outputOnFailure": true } },
+    { "name": "release-accel",       "configurePreset": "release-accel",       "output": { "outputOnFailure": true } },
+    { "name": "release-all",         "configurePreset": "release-all",         "output": { "outputOnFailure": true } },
+    { "name": "release-accel-all",   "configurePreset": "release-accel-all",   "output": { "outputOnFailure": true } },
+    { "name": "release-asan",        "configurePreset": "release-asan",        "output": { "outputOnFailure": true } },
+    { "name": "release-accel-asan",  "configurePreset": "release-accel-asan",  "output": { "outputOnFailure": true } },
+    { "name": "release-all-asan",    "configurePreset": "release-all-asan",    "output": { "outputOnFailure": true } },
+    { "name": "release-accel-all-asan","configurePreset": "release-accel-all-asan","output": { "outputOnFailure": true } }
   ]
 }

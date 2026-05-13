@@ -8,7 +8,9 @@
 #include "pgo/geometry/rest_mesh.hpp"
 #include "pgo/integrator/backward_euler.hpp"
 #include "pgo/integrator/dynamic_state.hpp"
-#include "pgo/io/abc_writer.hpp"
+#if defined(PGO_ENABLE_ALEMBIC)
+#    include "pgo/io/abc_writer.hpp"
+#endif
 #include "pgo/io/obj_frame_writer.hpp"
 #include "pgo/solver/status_name.hpp"
 
@@ -158,15 +160,19 @@ int main(int argc, char** argv) {
         pgo::io::ObjFrameWriter<double, 3> writer{opts.output};
 
         std::vector<int> face_counts(mesh.num_faces(), 3);
+#if defined(PGO_ENABLE_ALEMBIC)
         std::optional<pgo::io::AbcWriter<double, 3>> abc_writer;
         if (!opts.abc_output.empty()) {
             abc_writer.emplace(opts.abc_output, 1.0 / opts.dt,
                                mesh.face_indices(),
                                std::span<const int>{face_counts.data(), face_counts.size()});
         }
+#endif
 
         static_cast<void>(writer.write_frame(mesh, state.u));
+#if defined(PGO_ENABLE_ALEMBIC)
         if (abc_writer) abc_writer->write_frame(mesh, state.u);
+#endif
 
         const std::size_t num_steps = opts.frames - 1;
         for (std::size_t step = 0; step < num_steps; ++step) {
@@ -188,7 +194,9 @@ int main(int argc, char** argv) {
             }
 
             static_cast<void>(writer.write_frame(mesh, state.u));
+#if defined(PGO_ENABLE_ALEMBIC)
             if (abc_writer) abc_writer->write_frame(mesh, state.u);
+#endif
         }
 
         std::cout << std::format("resolution: {}x{}  ({} vertices, {} edges, {} faces)\n",

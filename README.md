@@ -34,6 +34,43 @@ It selects one of:
 You can also pass a platform profile explicitly with
 `--profile:host=... --profile:build=...`.
 
+## Preset Dimensions
+
+Preset names follow `{debug,release}[-accel][-all][-asan]`. Each slot maps to one
+orthogonal dimension:
+
+| Slot | Present | Absent |
+|------|---------|--------|
+| Build type | `debug` / `release` | (required) |
+| `-accel` | Eigen BLAS/LAPACK acceleration (MKL or Accelerate) | no acceleration |
+| `-all` | all optional compile-time deps (spdlog, Alembic) | core deps only |
+| `-asan` | address + undefined-behavior sanitizers | no sanitizers |
+
+ASan presets share the Conan dependency folder of their non-ASan counterpart
+(e.g. `debug-asan` reuses `build/conan/debug/`), because sanitizers are pure
+compiler flags and do not change the dependency graph.
+
+### Visible Presets
+
+| Preset | Build | Accel | All | ASan |
+|--------|-------|-------|-----|------|
+| `debug` | Debug | | | |
+| `debug-accel` | Debug | ✓ | | |
+| `debug-all` | Debug | | ✓ | |
+| `debug-accel-all` | Debug | ✓ | ✓ | |
+| `debug-asan` | Debug | | | ✓ |
+| `debug-accel-asan` | Debug | ✓ | | ✓ |
+| `debug-all-asan` | Debug | | ✓ | ✓ |
+| `debug-accel-all-asan` | Debug | ✓ | ✓ | ✓ |
+| `release` | Release | | | |
+| `release-accel` | Release | ✓ | | |
+| `release-all` | Release | | ✓ | |
+| `release-accel-all` | Release | ✓ | ✓ | |
+| `release-asan` | Release | | | ✓ |
+| `release-accel-asan` | Release | ✓ | | ✓ |
+| `release-all-asan` | Release | | ✓ | ✓ |
+| `release-accel-all-asan` | Release | ✓ | ✓ | ✓ |
+
 ## Configure Wrapper
 
 Use the repository wrapper to install Conan dependencies for a CMake preset and
@@ -44,14 +81,8 @@ uv run python scripts/pgo_configure.py debug
 ```
 
 The wrapper reads `CMakePresets.json`, derives the matching Conan output folder
-from `CMAKE_TOOLCHAIN_FILE`, and uses `conan/profiles/default` unless a profile
-override is provided:
-
-```bash
-uv run python scripts/pgo_configure.py debug-acceleration --profile conan/profiles/macos-arm64-apple-clang
-uv run python scripts/pgo_configure.py release --host-profile conan/profiles/default --build-profile conan/profiles/default
-uv run python scripts/pgo_configure.py debug --dry-run
-```
+from `CMAKE_TOOLCHAIN_FILE`, and forwards relevant CMake cache variables to
+Conan options (e.g. `PGO_ENABLE_SPDLOG` → `-o:h enable_spdlog=True`).
 
 ## Build: Debug
 
@@ -69,14 +100,16 @@ cmake --build --preset release
 
 ## Build: ASan/UBSan
 
-ASan/UBSan uses the debug Conan toolchain and enables `PGO_ENABLE_SANITIZERS`.
+ASan/UBSan uses the `debug-asan` preset, which shares the debug Conan toolchain
+and enables `PGO_ENABLE_SANITIZERS`. All debug variants support `-asan` suffix
+(e.g. `debug-accel-asan`, `debug-all-asan`, `debug-accel-all-asan`).
 
 ```bash
-uv run python scripts/pgo_configure.py asan
-cmake --build --preset asan
+uv run python scripts/pgo_configure.py debug-asan
+cmake --build --preset debug-asan
 ```
 
-The sanitizer preset is intended for Clang/GCC-style toolchains. MSVC sanitizer
+The sanitizer presets are intended for Clang/GCC-style toolchains. MSVC sanitizer
 support is not configured yet.
 
 ## Eigen Acceleration
@@ -94,9 +127,9 @@ Acceleration presets use `PGO_EIGEN_ACCELERATION_BACKEND=AUTO`. On Apple
 platforms, `AUTO` selects the system Accelerate framework:
 
 ```bash
-uv run python scripts/pgo_configure.py debug-acceleration --profile conan/profiles/macos-arm64-apple-clang
-cmake --build --preset debug-acceleration
-ctest --preset debug-acceleration -R EigenConfig
+uv run python scripts/pgo_configure.py debug-accel --profile conan/profiles/macos-arm64-apple-clang
+cmake --build --preset debug-accel
+ctest --preset debug-accel -R EigenConfig
 ```
 
 On Linux and Windows, `AUTO` selects MKL. Install oneMKL once through the
@@ -106,9 +139,9 @@ configuration checks the standard oneMKL install locations directly.
 ```bash
 scripts/install-onemkl/install-onemkl-linux.sh
 
-uv run python scripts/pgo_configure.py debug-acceleration --profile conan/profiles/ubuntu-x86_64-gcc
-cmake --build --preset debug-acceleration
-ctest --preset debug-acceleration -R EigenConfig
+uv run python scripts/pgo_configure.py debug-accel --profile conan/profiles/ubuntu-x86_64-gcc
+cmake --build --preset debug-accel
+ctest --preset debug-accel -R EigenConfig
 ```
 
 On Windows, use `.\scripts\install-onemkl\install-onemkl-windows.ps1` for the setup step.
@@ -141,7 +174,7 @@ Run the configured test preset after building:
 
 ```bash
 ctest --preset debug
-ctest --preset asan
+ctest --preset debug-asan
 ```
 
 ## Benchmarks
@@ -164,9 +197,9 @@ cmake --build --preset release --target pgo_benchmarks
 Build and run the acceleration path:
 
 ```bash
-uv run python scripts/pgo_configure.py release-acceleration --profile conan/profiles/macos-arm64-apple-clang
-cmake --build --preset release-acceleration --target pgo_benchmarks
-./build/release-acceleration/benchmarks/pgo_benchmarks
+uv run python scripts/pgo_configure.py release-accel --profile conan/profiles/macos-arm64-apple-clang
+cmake --build --preset release-accel --target pgo_benchmarks
+./build/release-accel/benchmarks/pgo_benchmarks
 ```
 
 On Linux and Windows acceleration builds, run the matching oneMKL setup script

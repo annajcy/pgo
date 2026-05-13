@@ -6,7 +6,7 @@
 
 **架构:** 内部核心是现代 C++23 template/header-only library；对外二进制接口是 compiled C99 ABI dynamic library。CPU 实现优先，但数据布局和 energy interface 从第一天就为 Milestone 2 的 Vulkan/Slang GPU backend 留好边界：flat storage、显式 `X + u`、local contribution API、独立 assembly 层、geometry/storage 不持有 Eigen object。
 
-**技术栈:** C++23、C99 ABI、CMake Presets、Conan 2、Eigen、GoogleTest、CLI11、tinyobjloader、Alembic、clang-format、GitHub Actions。
+**技术栈:** C++23、C99 ABI、CMake Presets、Conan 2、Eigen、GoogleTest、CLI11、tinyobjloader、Alembic (optional)、spdlog (optional)、clang-format、GitHub Actions。
 
 ---
 
@@ -30,7 +30,7 @@
 - C++ template、STL、Eigen、异常、allocator 内部细节不能越过 C ABI 边界。
 - C API 只暴露 `extern "C"`、opaque handles、POD descriptors、pointer/count arrays、status code、explicit destroy/copy functions。
 - C bridge 的 `.cpp` 内部可以使用现代 C++、STL、RAII、Eigen，但所有 exported C function 必须 catch exceptions 并转换为 `pgo_status_t` + `pgo_error_t`。
-- Alembic 不进入 C++ core。`.abc` 由独立 C++ tool 消费 OBJ frames 后生成，并通过 Conan 管理 Alembic/Imath 依赖。
+- Alembic 不进入 C++ core。`.abc` 由独立 C++ tool 消费 OBJ frames 后生成，通过 Conan 管理 Alembic/Imath 依赖。Alembic 是 optional dependency，由 `PGO_ENABLE_ALEMBIC` (CMake) / `enable_alembic` (Conan) 门控，默认 OFF，仅在 `-all` preset 下启用。关闭时 `pgo::io` 仅保留 tinyobjloader OBJ IO。
 - Vulkan、Slang、GPU reductions、GPU linear solver、contact、IPC、FEM、time integrator 不属于 Milestone 1。
 
 ## 1. 目标目录结构
@@ -166,8 +166,8 @@
 ```bash
 cmake --preset debug
 cmake --build --preset debug
-cmake --preset asan
-cmake --build --preset asan
+cmake --preset debug-asan
+cmake --build --preset debug-asan
 cmake --preset release
 cmake --build --preset release
 ```
@@ -422,15 +422,15 @@ endif()
 
 - [x] **Step 5: 创建 `CMakePresets.json`**
 
-包含 `debug`、`asan`、`release` 三个 configure/build preset。`debug` 和 `asan` 使用 `build/conan/debug/conan_toolchain.cmake`，`release` 使用 `build/conan/release/conan_toolchain.cmake`。
+包含 `debug`、`debug-asan`、`release` 三个 configure/build preset。`debug` 和 `debug-asan` 使用 `build/conan/debug/conan_toolchain.cmake`，`release` 使用 `build/conan/release/conan_toolchain.cmake`。
 
 - [x] **Step 6: 验证 configure/build**
 
 ```bash
 cmake --preset debug
 cmake --build --preset debug
-cmake --preset asan
-cmake --build --preset asan
+cmake --preset debug-asan
+cmake --build --preset debug-asan
 cmake --preset release
 cmake --build --preset release
 ```
@@ -571,7 +571,7 @@ scripts/install-onemkl/install-onemkl-linux.sh
 conan install . \
   --profile:host=conan/profiles/ubuntu-x86_64-gcc \
   --profile:build=conan/profiles/ubuntu-x86_64-gcc \
-  --output-folder=build/conan/debug-acceleration \
+  --output-folder=build/conan/debug-accel \
   --build=missing \
   -s:h build_type=Debug
 ```
@@ -583,7 +583,7 @@ Windows:
 conan install . `
   --profile:host=conan/profiles/windows-x86_64-msvc `
   --profile:build=conan/profiles/windows-x86_64-msvc `
-  --output-folder=build/conan/debug-acceleration `
+  --output-folder=build/conan/debug-accel `
   --build=missing `
   -s:h build_type=Debug
 ```
@@ -737,42 +737,42 @@ add_executable(pgo_tests
 ```text
 debug
 release
-asan
+debug-asan
 ```
 
 并新增 acceleration presets：
 
 ```text
-debug-acceleration
-release-acceleration
+debug-accel
+release-accel
 ```
 
-`debug-acceleration` 使用：
+`debug-accel` 使用：
 
 ```json
 {
-  "name": "debug-acceleration",
+  "name": "debug-accel",
   "inherits": "base",
-  "binaryDir": "${sourceDir}/build/debug-acceleration",
+  "binaryDir": "${sourceDir}/build/debug-accel",
   "cacheVariables": {
     "CMAKE_BUILD_TYPE": "Debug",
-    "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/debug-acceleration/conan_toolchain.cmake",
+    "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/debug-accel/conan_toolchain.cmake",
     "PGO_ENABLE_EIGEN_ACCELERATION": "ON",
     "PGO_EIGEN_ACCELERATION_BACKEND": "AUTO"
   }
 }
 ```
 
-`release-acceleration` 使用：
+`release-accel` 使用：
 
 ```json
 {
-  "name": "release-acceleration",
+  "name": "release-accel",
   "inherits": "base",
-  "binaryDir": "${sourceDir}/build/release-acceleration",
+  "binaryDir": "${sourceDir}/build/release-accel",
   "cacheVariables": {
     "CMAKE_BUILD_TYPE": "Release",
-    "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/release-acceleration/conan_toolchain.cmake",
+    "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/release-accel/conan_toolchain.cmake",
     "PGO_ENABLE_EIGEN_ACCELERATION": "ON",
     "PGO_EIGEN_ACCELERATION_BACKEND": "AUTO"
   }
@@ -782,10 +782,10 @@ release-acceleration
 要求同时添加同名 build/test presets：
 
 ```text
-cmake --build --preset debug-acceleration
-ctest --preset debug-acceleration
-cmake --build --preset release-acceleration
-ctest --preset release-acceleration
+cmake --build --preset debug-accel
+ctest --preset debug-accel
+cmake --build --preset release-accel
+ctest --preset release-accel
 ```
 
 设计约束：
@@ -812,12 +812,12 @@ ctest --preset debug -R EigenConfig
 conan install . \
   --profile:host=conan/profiles/macos-arm64-apple-clang \
   --profile:build=conan/profiles/macos-arm64-apple-clang \
-  --output-folder=build/conan/debug-acceleration \
+  --output-folder=build/conan/debug-accel \
   --build=missing \
   -s:h build_type=Debug
-cmake --preset debug-acceleration
-cmake --build --preset debug-acceleration
-ctest --preset debug-acceleration -R EigenConfig
+cmake --preset debug-accel
+cmake --build --preset debug-accel
+ctest --preset debug-accel -R EigenConfig
 ```
 
 期望：`AUTO` 选择 Accelerate，链接 Accelerate framework，测试通过。
@@ -831,7 +831,7 @@ scripts/install-onemkl/install-onemkl-linux.sh
 conan install . \
   --profile:host=conan/profiles/ubuntu-x86_64-gcc \
   --profile:build=conan/profiles/ubuntu-x86_64-gcc \
-  --output-folder=build/conan/debug-acceleration \
+  --output-folder=build/conan/debug-accel \
   --build=missing \
   -s:h build_type=Debug
 ```
@@ -839,9 +839,9 @@ conan install . \
 然后运行：
 
 ```bash
-cmake --preset debug-acceleration
-cmake --build --preset debug-acceleration
-ctest --preset debug-acceleration -R EigenConfig
+cmake --preset debug-accel
+cmake --build --preset debug-accel
+ctest --preset debug-accel -R EigenConfig
 ```
 
 期望：`AUTO` 选择 MKL，链接 `MKL::MKL`，测试通过。
@@ -2766,7 +2766,7 @@ ctest --preset debug -R "Inertial|BackwardEuler|solver"
 
 ## Phase 4.6: `pgo::log` Facade
 
-**当前状态:** 待实现。这个 phase 放在 Phase 5 example 之前，让 examples、tools 和后续 C API bridge 可以统一日志输出；core numerical modules 继续只返回 programmatic status，不直接打印。
+**当前状态:** Tasks 4.6.1–4.6.5 已完成。core log facade（level/sink/logger/null_sink/stderr_sink/registry）、CMake target（`pgo::log`）、基础 log 测试、spdlog optional sink 及测试已落地。Tasks 4.6.6（examples/tools/C API bridge）和 4.6.7（边界检查）待后续实现。
 
 **Phase 4.6 目标:** 实现一个轻量 logging facade：
 
@@ -2797,7 +2797,7 @@ Sink     = backend 抽象，负责真正输出
 - 创建: `include/pgo/log/stderr_sink.hpp`
 - 创建: `src/log/stderr_sink.cpp`
 
-- [ ] **Step 1: 实现 `level.hpp`**
+- [x] **Step 1: 实现 `level.hpp`**
 
 `include/pgo/log/level.hpp`:
 
@@ -2845,7 +2845,7 @@ static_assert(static_cast<int>(Level::trace) < static_cast<int>(Level::error),
 } // namespace pgo::log
 ```
 
-- [ ] **Step 2: 实现 backend abstraction**
+- [x] **Step 2: 实现 backend abstraction**
 
 `include/pgo/log/sink.hpp`:
 
@@ -2872,7 +2872,7 @@ public:
 
 ```
 
-- [ ] **Step 3: 实现 `Logger` value type**
+- [x] **Step 3: 实现 `Logger` value type**
 
 `include/pgo/log/logger.hpp`:
 
@@ -2924,7 +2924,7 @@ private:
 } // namespace pgo::log
 ```
 
-- [ ] **Step 4: 实现 `NullSink`**
+- [x] **Step 4: 实现 `NullSink`**
 
 `include/pgo/log/null_sink.hpp`:
 
@@ -2943,7 +2943,7 @@ public:
 } // namespace pgo::log
 ```
 
-- [ ] **Step 5: 实现 thread-safe `StderrSink`**
+- [x] **Step 5: 实现 thread-safe `StderrSink`**
 
 `include/pgo/log/stderr_sink.hpp`:
 
@@ -2990,7 +2990,7 @@ void StderrSink::log(Level level, std::string_view logger_name, std::string_view
 - 创建: `include/pgo/log/registry.hpp`
 - 创建: `src/log/registry.cpp`
 
-- [ ] **Step 1: 定义 `Registry` API**
+- [x] **Step 1: 定义 `Registry` API**
 
 `include/pgo/log/registry.hpp`:
 
@@ -3050,7 +3050,7 @@ void error(std::string_view message);
 } // namespace pgo::log
 ```
 
-- [ ] **Step 2: 实现默认 registry 和 convenience API**
+- [x] **Step 2: 实现默认 registry 和 convenience API**
 
 `src/log/registry.cpp`:
 
@@ -3138,7 +3138,7 @@ void error(std::string_view message) { root(Level::error).error(message); }
 - 修改: `CMakeLists.txt`
 - 创建: `src/log/CMakeLists.txt`
 
-- [ ] **Step 1: 添加 logging option**
+- [x] **Step 1: 添加 logging option**
 
 在 `cmake/pgo_options.cmake` 增加：
 
@@ -3146,7 +3146,7 @@ void error(std::string_view message) { root(Level::error).error(message); }
 option(PGO_ENABLE_SPDLOG "Enable spdlog-backed pgo::log sink" OFF)
 ```
 
-- [ ] **Step 2: 添加顶层 subdirectory**
+- [x] **Step 2: 添加顶层 subdirectory**
 
 在 `CMakeLists.txt` 中 `add_subdirectory(src/io)` 后加入：
 
@@ -3156,7 +3156,7 @@ add_subdirectory(src/log)
 
 设计约束：不要让 `pgo_core` link `pgo::log`。
 
-- [ ] **Step 3: 创建 `pgo_log` target**
+- [x] **Step 3: 创建 `pgo_log` target**
 
 `src/log/CMakeLists.txt`:
 
@@ -3181,7 +3181,7 @@ target_link_libraries(pgo_log PUBLIC pgo_project_warnings pgo_project_sanitizers
 - 创建: `tests/log/test_log.cpp`
 - 修改: `tests/CMakeLists.txt`
 
-- [ ] **Step 1: 添加 `CaptureSink` 测试 fixture**
+- [x] **Step 1: 添加 `CaptureSink` 测试 fixture**
 
 `tests/log/test_log.cpp`:
 
@@ -3281,7 +3281,7 @@ TEST(NullSink, DropsMessagesWithoutThrowing) {
 } // namespace pgo::log::test
 ```
 
-- [ ] **Step 2: 添加独立 log test target**
+- [x] **Step 2: 添加独立 log test target**
 
 在 `tests/CMakeLists.txt` 末尾加入：
 
@@ -3301,7 +3301,7 @@ gtest_discover_tests(pgo_log_tests)
 
 > log tests 全部使用局部 `Registry` 实例 + `CaptureSink`，不依赖全局 `default_registry()` 状态，可以安全并行执行。
 
-- [ ] **Step 3: 运行默认 log 测试**
+- [x] **Step 3: 运行默认 log 测试**
 
 ```bash
 cmake --build --preset debug --target pgo_log_tests
@@ -3322,7 +3322,7 @@ ctest --preset debug -R "Log|Registry|NullSink"
 - 创建: `tests/log/test_spdlog_sink.cpp`
 - 修改: `tests/CMakeLists.txt`
 
-- [ ] **Step 1: 给 Conan recipe 添加 option-gated spdlog 依赖**
+- [x] **Step 1: 给 Conan recipe 添加 option-gated spdlog 依赖**
 
 `conanfile.py` 中添加：
 
@@ -3342,7 +3342,7 @@ ctest --preset debug -R "Log|Registry|NullSink"
             self.requires("spdlog/[>=1.14 <2]")
 ```
 
-- [ ] **Step 2: CMake 只在启用时查找 spdlog**
+- [x] **Step 2: CMake 只在启用时查找 spdlog**
 
 `cmake/pgo_dependencies.cmake`:
 
@@ -3352,19 +3352,19 @@ if(PGO_ENABLE_SPDLOG)
 endif()
 ```
 
-- [ ] **Step 3: 添加 `debug-spdlog` preset**
+- [x] **Step 3: 添加 `debug-all` preset**
 
 `CMakePresets.json` 中新增 configure/build/test preset。configure preset 使用独立 Conan toolchain folder：
 
 ```json
 {
-  "name": "debug-spdlog",
+  "name": "debug-all",
   "displayName": "Debug spdlog",
   "inherits": "base",
-  "binaryDir": "${sourceDir}/build/debug-spdlog",
+  "binaryDir": "${sourceDir}/build/debug-all",
   "cacheVariables": {
     "CMAKE_BUILD_TYPE": "Debug",
-    "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/debug-spdlog/conan_toolchain.cmake",
+    "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/debug-all/conan_toolchain.cmake",
     "PGO_ENABLE_SPDLOG": "ON"
   }
 }
@@ -3372,7 +3372,7 @@ endif()
 
 并添加同名 build preset 和 test preset。
 
-- [ ] **Step 4: 实现 `SpdlogSink` public header**
+- [x] **Step 4: 实现 `SpdlogSink` public header**
 
 `include/pgo/log/spdlog_sink.hpp`:
 
@@ -3408,7 +3408,7 @@ std::shared_ptr<Sink> make_default_spdlog_sink();
 #endif
 ```
 
-- [ ] **Step 5: 实现 `SpdlogSink` source**
+- [x] **Step 5: 实现 `SpdlogSink` source**
 
 `src/log/spdlog_sink.cpp`:
 
@@ -3462,7 +3462,7 @@ std::shared_ptr<Sink> make_default_spdlog_sink() {
 #endif
 ```
 
-- [ ] **Step 6: Wire spdlog source and compile definition**
+- [x] **Step 6: Wire spdlog source and compile definition**
 
 `src/log/CMakeLists.txt`:
 
@@ -3474,7 +3474,7 @@ if(PGO_ENABLE_SPDLOG)
 endif()
 ```
 
-- [ ] **Step 7: 添加 spdlog smoke test**
+- [x] **Step 7: 添加 spdlog smoke test**
 
 `tests/log/test_spdlog_sink.cpp`:
 
@@ -3506,20 +3506,20 @@ if(PGO_ENABLE_SPDLOG)
 endif()
 ```
 
-- [ ] **Step 8: 运行 spdlog 构建验证**
+- [x] **Step 8: 运行 spdlog 构建验证**
 
 ```bash
 conan install . \
   --profile:host=conan/profiles/default \
   --profile:build=conan/profiles/default \
-  --output-folder=build/conan/debug-spdlog \
+  --output-folder=build/conan/debug-all \
   --build=missing \
   -s:h build_type=Debug \
   -o enable_spdlog=True
 
-cmake --preset debug-spdlog
-cmake --build --preset debug-spdlog --target pgo_log_tests
-ctest --preset debug-spdlog -R "Spdlog|Log|Registry|NullSink"
+cmake --preset debug-all
+cmake --build --preset debug-all --target pgo_log_tests
+ctest --preset debug-all -R "Spdlog|Log|Registry|NullSink"
 ```
 
 期望：spdlog-enabled log tests 全部通过。
@@ -3582,7 +3582,7 @@ log.info(std::format(
 `tools/CMakeLists.txt`:
 
 ```cmake
-target_link_libraries(pgo_obj_frames_to_abc PRIVATE CLI11::CLI11 Alembic::Alembic pgo::log)
+target_link_libraries(pgo_obj_frames_to_abc PRIVATE CLI11::CLI11 pgo::io pgo::log)
 ```
 
 `tools/obj_frames_to_abc.cpp` 中使用：
@@ -3845,7 +3845,7 @@ cmake --build --preset debug --target pgo_mass_spring_cloth
 - 接收 `--frames-dir`、`--output`、`--fps`。
 - 按字典序读取 `frame_*.obj`。
 - 要求所有 frame topology 一致。
-- 通过 Conan 依赖 `alembic/1.8.8`，Imath 由 Alembic 传递引入。
+- 通过 Conan option `enable_alembic` 条件依赖 `alembic/1.8.8`（默认 OFF，`-all` preset 开启），Imath 由 Alembic 传递引入。
 - 构建 target: `pgo_obj_frames_to_abc`。
 - 成功时写出 animated polymesh `.abc`。
 
@@ -4114,9 +4114,9 @@ ctest --preset debug
 ASan job 使用：
 
 ```bash
-cmake --preset asan
-cmake --build --preset asan
-ctest --preset asan
+cmake --preset debug-asan
+cmake --build --preset debug-asan
+ctest --preset debug-asan
 ```
 
 要求：Phase 0 已经存在 `build-debug` 和 `sanitize` jobs；本任务只是在 tests/examples/C API targets 存在后恢复 `ctest`，不要退回到本机 Conan default profile。
@@ -4133,9 +4133,9 @@ PGO_ENABLE_EIGEN_ACCELERATION=OFF
 
 同时必须添加 acceleration-on jobs，全部使用 preset：
 
-- `macos-latest` + `debug-acceleration`，CMake `AUTO` 选择 Accelerate。
-- `ubuntu-latest` + `debug-acceleration`，CMake `AUTO` 选择 MKL。
-- `windows-latest` + `debug-acceleration`，CMake `AUTO` 选择 MKL。
+- `macos-latest` + `debug-accel`，CMake `AUTO` 选择 Accelerate。
+- `ubuntu-latest` + `debug-accel`，CMake `AUTO` 选择 MKL。
+- `windows-latest` + `debug-accel`，CMake `AUTO` 选择 MKL。
 
 MKL jobs 必须在 CMake configure 前安装系统 oneMKL，并保证 `find_package(MKL CONFIG REQUIRED)` 能找到 `MKLConfig.cmake`。Conan 不负责 MKL；CI 复用 `scripts/install-onemkl/install-onemkl-linux.sh` 和 `scripts/install-onemkl/install-onemkl-windows.ps1` 完成平台安装。
 
@@ -4148,12 +4148,12 @@ uv tool install conan
 conan install . \
   --profile:host=conan/profiles/macos-arm64-apple-clang \
   --profile:build=conan/profiles/macos-arm64-apple-clang \
-  --output-folder=build/conan/debug-acceleration \
+  --output-folder=build/conan/debug-accel \
   --build=missing \
   -s:h build_type=Debug
-cmake --preset debug-acceleration
-cmake --build --preset debug-acceleration
-ctest --preset debug-acceleration -R EigenConfig
+cmake --preset debug-accel
+cmake --build --preset debug-accel
+ctest --preset debug-accel -R EigenConfig
 ```
 
 Ubuntu MKL job：
@@ -4164,12 +4164,12 @@ scripts/install-onemkl/install-onemkl-linux.sh
 conan install . \
   --profile:host=conan/profiles/ubuntu-x86_64-gcc \
   --profile:build=conan/profiles/ubuntu-x86_64-gcc \
-  --output-folder=build/conan/debug-acceleration \
+  --output-folder=build/conan/debug-accel \
   --build=missing \
   -s:h build_type=Debug
-cmake --preset debug-acceleration
-cmake --build --preset debug-acceleration
-ctest --preset debug-acceleration -R EigenConfig
+cmake --preset debug-accel
+cmake --build --preset debug-accel
+ctest --preset debug-accel -R EigenConfig
 ```
 
 Windows MKL job：
@@ -4180,12 +4180,12 @@ uv tool install conan
 conan install . `
   --profile:host=conan/profiles/windows-x86_64-msvc `
   --profile:build=conan/profiles/windows-x86_64-msvc `
-  --output-folder=build/conan/debug-acceleration `
+  --output-folder=build/conan/debug-accel `
   --build=missing `
   -s:h build_type=Debug
-cmake --preset debug-acceleration
-cmake --build --preset debug-acceleration
-ctest --preset debug-acceleration -R EigenConfig
+cmake --preset debug-accel
+cmake --build --preset debug-accel
+ctest --preset debug-accel -R EigenConfig
 ```
 
 - [x] **Step 4: 添加 CI matrix 设计说明**
@@ -4219,15 +4219,15 @@ strategy:
     include:
       - os: macos-latest
         profile: conan/profiles/macos-arm64-apple-clang
-        preset: debug-acceleration
+        preset: debug-accel
         needs_mkl: false
       - os: ubuntu-latest
         profile: conan/profiles/ubuntu-x86_64-gcc
-        preset: debug-acceleration
+        preset: debug-accel
         needs_mkl: true
       - os: windows-latest
         profile: conan/profiles/windows-x86_64-msvc
-        preset: debug-acceleration
+        preset: debug-accel
         needs_mkl: true
 ```
 
@@ -4570,9 +4570,9 @@ ctest --preset debug
 - [ ] **Step 2: 运行 ASan/UBSan**
 
 ```bash
-cmake --preset asan
-cmake --build --preset asan
-ctest --preset asan
+cmake --preset debug-asan
+cmake --build --preset debug-asan
+ctest --preset debug-asan
 ```
 
 期望：ASan/UBSan tests 通过。
@@ -4614,7 +4614,7 @@ cmake --build --preset debug --target pgo_mass_spring_cloth
 - `cmake --preset debug` 在 Conan 依赖安装后成功。
 - `cmake --build --preset debug` 成功。
 - `ctest --preset debug` 通过。
-- Linux 或本地 Clang/GCC 环境中，`cmake --preset asan`、`cmake --build --preset asan`、`ctest --preset asan` 通过。
+- Linux 或本地 Clang/GCC 环境中，`cmake --preset debug-asan`、`cmake --build --preset debug-asan`、`ctest --preset debug-asan` 通过。
 - Mass-spring cloth example 能写出 OBJ frames。
 - Solver 优化 free displacement variables，而不是 current positions。
 - Rest positions `X` 在求解过程中保持 immutable。

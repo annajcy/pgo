@@ -10,9 +10,11 @@ class PgoRecipe(ConanFile):
 
     options = {
         "enable_spdlog": [True, False],
+        "enable_alembic": [True, False],
     }
     default_options = {
         "enable_spdlog": False,
+        "enable_alembic": False,
     }
 
     def generate(self):
@@ -27,7 +29,8 @@ class PgoRecipe(ConanFile):
         self.requires("eigen/3.4.0")
         self.requires("cli11/[>=2.4 <3]")
         self.requires("tinyobjloader/2.0.0-rc10", options={"double": True})
-        self.requires("alembic/1.8.8")
+        if self.options.enable_alembic:
+            self.requires("alembic/1.8.8")
         if self.options.enable_spdlog:
             self.requires("spdlog/[>=1.14 <2]")
 

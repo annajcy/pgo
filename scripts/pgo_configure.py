@@ -18,6 +18,7 @@ DEFAULT_PROFILE = pathlib.Path("conan/profiles/default")
 # Only variables listed here are forwarded to conan install as -o:h <option>=<value>.
 CMAKE_TO_CONAN_OPTIONS: dict[str, tuple[str, dict[str, str]]] = {
     "PGO_ENABLE_SPDLOG": ("enable_spdlog", {"ON": "True", "OFF": "False"}),
+    "PGO_ENABLE_ALEMBIC": ("enable_alembic", {"ON": "True", "OFF": "False"}),
 }
 
 
@@ -71,8 +72,13 @@ def load_configure_presets(repo_root: pathlib.Path) -> dict[str, dict[str, Any]]
 
         for parent in inherited_names:
             parent_preset = resolve(parent)
-            merged.update(parent_preset)
-            merged["cacheVariables"] = dict(parent_preset.get("cacheVariables", {}))
+            for pkey, pvalue in parent_preset.items():
+                if pkey == "cacheVariables":
+                    cv = dict(merged.get("cacheVariables", {}))
+                    cv.update(pvalue)
+                    merged["cacheVariables"] = cv
+                else:
+                    merged[pkey] = pvalue
 
         for key, value in preset.items():
             if key == "cacheVariables":

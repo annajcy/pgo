@@ -1,5 +1,7 @@
 #pragma once
 
+#if defined(PGO_ENABLE_ALEMBIC)
+
 #include "pgo/geometry/rest_mesh.hpp"
 #include "pgo/math/types.hpp"
 
@@ -99,3 +101,5 @@ private:
 };
 
 }  // namespace pgo::io
+
+#endif  // PGO_ENABLE_ALEMBIC
