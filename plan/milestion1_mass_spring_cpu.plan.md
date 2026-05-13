@@ -4059,177 +4059,43 @@ nm -gU build/debug/src/c_api/libpgo.dylib 2>/dev/null || nm -D --defined-only bu
 
 ## Phase 7: CI 和验证
 
-### Task 7.1: 升级 GitHub Actions CI 为全平台 build/test
+### Task 7.1: 升级 GitHub Actions CI 为全平台 build/test/benchmark
 
 **文件:**
 - 修改: `.github/workflows/ci.yml`
 
-- [x] **Step 1: 在 Phase 0 build-only CI 基础上加入 Linux/macOS/Windows 测试步骤**
+**当前状态:** 已完成。CI 重写为 2 个 job，覆盖所有平台 × preset 组合，包含 benchmark。
 
-CI 至少包含：
+- [x] **CI 结构**
 
-- `ubuntu-latest` Debug build/test。
-- `macos-latest` Debug build/test。
-- `windows-latest` Debug build/test。
-- `ubuntu-latest` ASan/UBSan build/test。
+两个 job，共享平台映射。`needs_mkl` 通过 `contains(preset, 'accel') && runner.os != 'macOS'` 自动推导。
 
-Debug job 使用对应仓库内 profile：
+**`build-and-test` job** — Debug 系 preset，全平台 build + test (3 × 5 = 15 jobs)：
 
-```text
-ubuntu-latest  -> conan/profiles/ubuntu-x86_64-gcc
-macos-latest   -> conan/profiles/macos-arm64-apple-clang
-windows-latest -> conan/profiles/windows-x86_64-msvc
-```
+| Preset | 验证点 |
+|--------|--------|
+| `debug` | 基线 build + 全量 test |
+| `debug-asan` | sanitizers (ASan/UBSan)，全平台 |
+| `debug-all` | optional deps (spdlog + Alembic) |
+| `debug-accel` | Eigen acceleration (MKL/Accelerate) |
+| `debug-accel-all` | accel + optional deps 交互 |
 
-Linux/macOS Debug job 执行：
+**`release` job** — Release 系 preset，全平台 build + test + benchmark (3 × 2 = 6 jobs)：
 
-```bash
-uv tool install conan
-conan install . \
-  --profile:host=conan/profiles/${PROFILE_NAME} \
-  --profile:build=conan/profiles/${PROFILE_NAME} \
-  --output-folder=build/conan/debug \
-  --build=missing \
-  -s:h build_type=Debug
-cmake --preset debug
-cmake --build --preset debug
-ctest --preset debug
-```
+| Preset | 验证点 |
+|--------|--------|
+| `release` | 基线 release build + test + benchmark |
+| `release-accel` | release + accel + benchmark |
 
-Windows Debug job 执行同样的 configure/build/test 流程，但 shell 使用 PowerShell 或 bash 均可；路径变量不要写死 Unix-only 路径。命令语义是：
+**步骤：** checkout → cmake → toolchain → conan → configure → build → test → [build benchmark → run benchmark (release only)]
 
-```powershell
-uv tool install conan
-conan install . `
-  --profile:host=conan/profiles/windows-x86_64-msvc `
-  --profile:build=conan/profiles/windows-x86_64-msvc `
-  --output-folder=build/conan/debug `
-  --build=missing `
-  -s:h build_type=Debug
-cmake --preset debug
-cmake --build --preset debug
-ctest --preset debug
-```
+**平台映射：**
 
-ASan job 使用：
-
-```bash
-cmake --preset debug-asan
-cmake --build --preset debug-asan
-ctest --preset debug-asan
-```
-
-要求：Phase 0 已经存在 `build-debug` 和 `sanitize` jobs；本任务只是在 tests/examples/C API targets 存在后恢复 `ctest`，不要退回到本机 Conan default profile。
-
-- [x] **Step 2: 添加 preset-driven `PGO_ENABLE_EIGEN_ACCELERATION=ON` CI 验证**
-
-默认全平台 CI 必须保持：
-
-```text
-PGO_ENABLE_EIGEN_ACCELERATION=OFF
-```
-
-这是 baseline job，保证没有 acceleration dependency 的用户也能稳定构建。
-
-同时必须添加 acceleration-on jobs，全部使用 preset：
-
-- `macos-latest` + `debug-accel`，CMake `AUTO` 选择 Accelerate。
-- `ubuntu-latest` + `debug-accel`，CMake `AUTO` 选择 MKL。
-- `windows-latest` + `debug-accel`，CMake `AUTO` 选择 MKL。
-
-MKL jobs 必须在 CMake configure 前安装系统 oneMKL，并保证 `find_package(MKL CONFIG REQUIRED)` 能找到 `MKLConfig.cmake`。Conan 不负责 MKL；CI 复用 `scripts/install-onemkl/install-onemkl-linux.sh` 和 `scripts/install-onemkl/install-onemkl-windows.ps1` 完成平台安装。
-
-- [x] **Step 3: 添加 acceleration-on CI 命令**
-
-macOS Accelerate job：
-
-```bash
-uv tool install conan
-conan install . \
-  --profile:host=conan/profiles/macos-arm64-apple-clang \
-  --profile:build=conan/profiles/macos-arm64-apple-clang \
-  --output-folder=build/conan/debug-accel \
-  --build=missing \
-  -s:h build_type=Debug
-cmake --preset debug-accel
-cmake --build --preset debug-accel
-ctest --preset debug-accel -R EigenConfig
-```
-
-Ubuntu MKL job：
-
-```bash
-uv tool install conan
-scripts/install-onemkl/install-onemkl-linux.sh
-conan install . \
-  --profile:host=conan/profiles/ubuntu-x86_64-gcc \
-  --profile:build=conan/profiles/ubuntu-x86_64-gcc \
-  --output-folder=build/conan/debug-accel \
-  --build=missing \
-  -s:h build_type=Debug
-cmake --preset debug-accel
-cmake --build --preset debug-accel
-ctest --preset debug-accel -R EigenConfig
-```
-
-Windows MKL job：
-
-```powershell
-uv tool install conan
-.\scripts\install-onemkl\install-onemkl-windows.ps1
-conan install . `
-  --profile:host=conan/profiles/windows-x86_64-msvc `
-  --profile:build=conan/profiles/windows-x86_64-msvc `
-  --output-folder=build/conan/debug-accel `
-  --build=missing `
-  -s:h build_type=Debug
-cmake --preset debug-accel
-cmake --build --preset debug-accel
-ctest --preset debug-accel -R EigenConfig
-```
-
-- [x] **Step 4: 添加 CI matrix 设计说明**
-
-`.github/workflows/ci.yml` 推荐使用 matrix 表达全平台 Debug jobs：
-
-```yaml
-strategy:
-  fail-fast: false
-  matrix:
-    include:
-      - os: ubuntu-latest
-        profile: conan/profiles/ubuntu-x86_64-gcc
-        preset: debug
-      - os: macos-latest
-        profile: conan/profiles/macos-arm64-apple-clang
-        preset: debug
-      - os: windows-latest
-        profile: conan/profiles/windows-x86_64-msvc
-        preset: debug
-```
-
-ASan job 单独留在 Ubuntu。Windows 不跑 sanitizer job。
-
-Acceleration-on jobs 可以使用单独 matrix：
-
-```yaml
-strategy:
-  fail-fast: false
-  matrix:
-    include:
-      - os: macos-latest
-        profile: conan/profiles/macos-arm64-apple-clang
-        preset: debug-accel
-        needs_mkl: false
-      - os: ubuntu-latest
-        profile: conan/profiles/ubuntu-x86_64-gcc
-        preset: debug-accel
-        needs_mkl: true
-      - os: windows-latest
-        profile: conan/profiles/windows-x86_64-msvc
-        preset: debug-accel
-        needs_mkl: true
-```
+| OS | Profile | CC | CXX |
+|----|---------|-----|------|
+| ubuntu-latest | ubuntu-x86_64-gcc | gcc-13 | g++-13 |
+| macos-latest | macos-arm64-apple-clang | cc | c++ |
+| windows-latest | windows-x86_64-msvc | cl | cl |
 
 
 ### Task 7.2: 添加 README 构建说明
@@ -4631,7 +4497,7 @@ cmake --build --preset debug --target pgo_mass_spring_cloth
 - `PGO_ENABLE_EIGEN_ACCELERATION=OFF` 默认构建通过；打开后 Apple 可走 Accelerate，Ubuntu/Windows 可在 oneMKL 可用时走 MKL。
 - PARDISO 被记录为 future linear solver backend，而不是 Eigen `MathBackend` 或 Eigen acceleration 开关的一部分。
 - GitHub Actions CPU build/test jobs 在 Ubuntu、macOS、Windows 三个平台通过；Ubuntu ASan/UBSan job 通过。
-- Eigen acceleration CI jobs 是可选验证，不作为默认全平台 CI 通过门槛。
+- Eigen acceleration CI jobs 已成为默认全平台 CI 矩阵的一部分（`debug-accel`、`debug-accel-all`、`release-accel`），所有平台均需通过。
 
 ## 推荐实现顺序
 

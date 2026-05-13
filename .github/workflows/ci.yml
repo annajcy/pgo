@@ -8,12 +8,18 @@ env:
   PGO_BENCHMARK_SMOKE_ARGS: --benchmark_min_time=0.1s --benchmark_repetitions=3 --benchmark_report_aggregates_only=true
 
 jobs:
-  build-debug:
-    name: ${{ matrix.os }} debug
+  build-and-test:
+    name: ${{ matrix.os }} ${{ matrix.preset }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        preset:
+          - debug
+          - debug-asan
+          - debug-all
+          - debug-accel
+          - debug-accel-all
         include:
           - os: ubuntu-latest
             profile: conan/profiles/ubuntu-x86_64-gcc
@@ -48,194 +54,12 @@ jobs:
       - name: Install Conan
         run: uv tool install conan
 
-      - name: Configure
-        env:
-          CC: ${{ matrix.cc }}
-          CXX: ${{ matrix.cxx }}
-        run: uv run python scripts/pgo_configure.py debug --profile ${{ matrix.profile }}
-
-      - name: Build
-        run: cmake --build --preset debug
-
-      - name: Test
-        run: ctest --preset debug
-
-  sanitize:
-    name: ubuntu asan-ubsan
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: lukka/get-cmake@latest
-
-      - name: Install GCC 13
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-13 g++-13
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v6
-
-      - name: Install Conan
-        run: uv tool install conan
-
-      - name: Configure
-        env:
-          CC: gcc-13
-          CXX: g++-13
-        run: uv run python scripts/pgo_configure.py debug-asan --profile conan/profiles/ubuntu-x86_64-gcc
-
-      - name: Build
-        run: cmake --build --preset debug-asan
-
-      - name: Test
-        run: ctest --preset debug-asan
-
-  acceleration:
-    name: ${{ matrix.os }} debug acceleration
-    runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.experimental }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-latest
-            profile: conan/profiles/macos-arm64-apple-clang
-            needs_mkl: false
-            cc: cc
-            cxx: c++
-            experimental: false
-          - os: ubuntu-latest
-            profile: conan/profiles/ubuntu-x86_64-gcc
-            needs_mkl: true
-            cc: gcc-13
-            cxx: g++-13
-            experimental: false
-          - os: windows-latest
-            profile: conan/profiles/windows-x86_64-msvc
-            needs_mkl: true
-            cc: cl
-            cxx: cl
-            experimental: false
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: lukka/get-cmake@latest
-
-      - name: Set up MSVC
-        if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
-
-      - name: Install GCC 13
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-13 g++-13
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v6
-
-      - name: Install Conan
-        run: uv tool install conan
-
-      - name: Install oneMKL
-        if: matrix.needs_mkl && runner.os == 'Linux'
+      - name: Install oneMKL (Linux)
+        if: contains(matrix.preset, 'accel') && runner.os == 'Linux'
         run: bash scripts/install-onemkl/install-onemkl-linux.sh
 
-      - name: Install oneMKL
-        if: matrix.needs_mkl && runner.os == 'Windows'
-        shell: pwsh
-        run: .\scripts\install-onemkl\install-onemkl-windows.ps1
-
-      - name: Configure
-        env:
-          CC: ${{ matrix.cc }}
-          CXX: ${{ matrix.cxx }}
-        run: uv run python scripts/pgo_configure.py debug-accel --profile ${{ matrix.profile }}
-
-      - name: Build
-        run: cmake --build --preset debug-accel
-
-      - name: Eigen acceleration smoke test
-        run: ctest --preset debug-accel -R EigenConfig
-
-  benchmark:
-    name: ${{ matrix.os }} ${{ matrix.preset }} benchmark
-    runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.experimental }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            profile: conan/profiles/ubuntu-x86_64-gcc
-            preset: release
-            needs_mkl: false
-            cc: gcc-13
-            cxx: g++-13
-            experimental: false
-          - os: macos-latest
-            profile: conan/profiles/macos-arm64-apple-clang
-            preset: release
-            needs_mkl: false
-            cc: cc
-            cxx: c++
-            experimental: false
-          - os: windows-latest
-            profile: conan/profiles/windows-x86_64-msvc
-            preset: release
-            needs_mkl: false
-            cc: cl
-            cxx: cl
-            experimental: false
-          - os: macos-latest
-            profile: conan/profiles/macos-arm64-apple-clang
-            preset: release-accel
-            needs_mkl: false
-            cc: cc
-            cxx: c++
-            experimental: false
-          - os: ubuntu-latest
-            profile: conan/profiles/ubuntu-x86_64-gcc
-            preset: release-accel
-            needs_mkl: true
-            cc: gcc-13
-            cxx: g++-13
-            experimental: false
-          - os: windows-latest
-            profile: conan/profiles/windows-x86_64-msvc
-            preset: release-accel
-            needs_mkl: true
-            cc: cl
-            cxx: cl
-            experimental: false
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: lukka/get-cmake@latest
-
-      - name: Set up MSVC
-        if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
-
-      - name: Install GCC 13
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-13 g++-13
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v6
-
-      - name: Install Conan
-        run: uv tool install conan
-
-      - name: Install oneMKL
-        if: matrix.needs_mkl && runner.os == 'Linux'
-        run: bash scripts/install-onemkl/install-onemkl-linux.sh
-
-      - name: Install oneMKL
-        if: matrix.needs_mkl && runner.os == 'Windows'
+      - name: Install oneMKL (Windows)
+        if: contains(matrix.preset, 'accel') && runner.os == 'Windows'
         shell: pwsh
         run: .\scripts\install-onemkl\install-onemkl-windows.ps1
 
@@ -245,11 +69,81 @@ jobs:
           CXX: ${{ matrix.cxx }}
         run: uv run python scripts/pgo_configure.py ${{ matrix.preset }} --profile ${{ matrix.profile }}
 
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      - name: Test
+        run: ctest --preset ${{ matrix.preset }}
+
+  release:
+    name: ${{ matrix.os }} ${{ matrix.preset }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        preset:
+          - release
+          - release-accel
+        include:
+          - os: ubuntu-latest
+            profile: conan/profiles/ubuntu-x86_64-gcc
+            cc: gcc-13
+            cxx: g++-13
+          - os: macos-latest
+            profile: conan/profiles/macos-arm64-apple-clang
+            cc: cc
+            cxx: c++
+          - os: windows-latest
+            profile: conan/profiles/windows-x86_64-msvc
+            cc: cl
+            cxx: cl
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: lukka/get-cmake@latest
+
+      - name: Set up MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install GCC 13
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-13 g++-13
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install Conan
+        run: uv tool install conan
+
+      - name: Install oneMKL (Linux)
+        if: contains(matrix.preset, 'accel') && runner.os == 'Linux'
+        run: bash scripts/install-onemkl/install-onemkl-linux.sh
+
+      - name: Install oneMKL (Windows)
+        if: contains(matrix.preset, 'accel') && runner.os == 'Windows'
+        shell: pwsh
+        run: .\scripts\install-onemkl\install-onemkl-windows.ps1
+
+      - name: Configure
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: uv run python scripts/pgo_configure.py ${{ matrix.preset }} --profile ${{ matrix.profile }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      - name: Test
+        run: ctest --preset ${{ matrix.preset }}
+
       - name: Build benchmark
         run: cmake --build --preset ${{ matrix.preset }} --target pgo_benchmarks
 
       - name: Check oneMKL runtime DLLs
-        if: matrix.needs_mkl && runner.os == 'Windows'
+        if: contains(matrix.preset, 'accel') && runner.os == 'Windows'
         run: |
           where.exe mkl_core.2.dll
           where.exe mkl_intel_thread.2.dll
