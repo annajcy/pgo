@@ -67,7 +67,7 @@ jobs:
         env:
           CC: ${{ matrix.cc }}
           CXX: ${{ matrix.cxx }}
-        run: uv run python scripts/pgo_configure.py ${{ matrix.preset }} --profile ${{ matrix.profile }}
+        run: uv run pgo-configure ${{ matrix.preset }} --profile ${{ matrix.profile }}
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
@@ -131,7 +131,7 @@ jobs:
         env:
           CC: ${{ matrix.cc }}
           CXX: ${{ matrix.cxx }}
-        run: uv run python scripts/pgo_configure.py ${{ matrix.preset }} --profile ${{ matrix.profile }}
+        run: uv run pgo-configure ${{ matrix.preset }} --profile ${{ matrix.profile }}
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}

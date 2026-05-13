@@ -4097,6 +4097,18 @@ nm -gU build/debug/src/c_api/libpgo.dylib 2>/dev/null || nm -D --defined-only bu
 | macos-latest | macos-arm64-apple-clang | cc | c++ |
 | windows-latest | windows-x86_64-msvc | cl | cl |
 
+### Task 7.1b: 工具链增强（已完成）
+
+**`scripts/pgo_configure.py`:**
+- 新增 `--all-presets` — 一键配置全部 16 个 visible preset，conan output folder 自动去重（16 preset → 8 `conan install`）
+- 新增 `--continue-on-error` — 单个 preset 失败不中止
+- 修复 multi-inheritance 时 `cacheVariables` key-by-key merge bug
+
+**`pyproject.toml` + `uv.lock`:**
+- 新增 `[project.scripts]` entry point：`uv run pgo-configure` 替代 `uv run python scripts/pgo_configure.py`
+- `uv.lock` 锁定 Python 依赖（纯 stdlib，依赖为空）
+- README 和 CI 全部改用 `uv run pgo-configure`
+
 
 ### Task 7.2: 添加 README 构建说明
 

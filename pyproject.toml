@@ -1,0 +1,19 @@
+[project]
+name = "pgo"
+version = "0.1.0"
+description = "GPU-aware C++23 physics simulation"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+pgo-configure = "scripts.pgo_configure:main_cli"
+
+[tool.uv]
+package = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["scripts"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

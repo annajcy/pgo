@@ -11,6 +11,7 @@ CMakeUserPresets.json
 *.exe
 *.pyc
 __pycache__/
+.venv/
 frames/
 output/
 *.abc

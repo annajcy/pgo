@@ -73,12 +73,13 @@ def load_configure_presets(repo_root: pathlib.Path) -> dict[str, dict[str, Any]]
         for parent in inherited_names:
             parent_preset = resolve(parent)
             for pkey, pvalue in parent_preset.items():
-                if pkey == "cacheVariables":
-                    cv = dict(merged.get("cacheVariables", {}))
-                    cv.update(pvalue)
-                    merged["cacheVariables"] = cv
-                else:
-                    merged[pkey] = pvalue
+                if pkey in ("cacheVariables", "hidden"):
+                    continue
+                merged[pkey] = pvalue
+            # cacheVariables: merge key-by-key (later parents override)
+            cv = dict(merged.get("cacheVariables", {}))
+            cv.update(parent_preset.get("cacheVariables", {}))
+            merged["cacheVariables"] = cv
 
         for key, value in preset.items():
             if key == "cacheVariables":
@@ -171,11 +172,105 @@ def run_command(command: list[str], repo_root: pathlib.Path) -> None:
     subprocess.run(command, cwd=repo_root, check=True)
 
 
+def get_visible_preset_names(repo_root: pathlib.Path) -> list[str]:
+    presets = load_configure_presets(repo_root)
+    return sorted(name for name, preset in presets.items() if not preset.get("hidden", False))
+
+
+def run_all_presets(
+    *,
+    repo_root: pathlib.Path,
+    host_profile: Optional[pathlib.Path],
+    build_profile: Optional[pathlib.Path],
+    build_missing: bool,
+    dry_run: bool,
+    continue_on_error: bool,
+) -> int:
+    preset_names = get_visible_preset_names(repo_root)
+    plans: list[ConfigurePlan] = []
+    errors: list[str] = []
+
+    for name in preset_names:
+        try:
+            plans.append(
+                create_plan(
+                    repo_root=repo_root,
+                    preset_name=name,
+                    host_profile=host_profile,
+                    build_profile=build_profile,
+                    build_missing=build_missing,
+                )
+            )
+        except (OSError, ValueError) as error:
+            errors.append(f"{name}: {error}")
+
+    if errors:
+        for err in errors:
+            print(f"error: {err}", file=sys.stderr)
+        if not continue_on_error:
+            return 1
+
+    # Deduplicate conan installs by output folder
+    seen_conan: set[pathlib.Path] = set()
+    deduped_conan: list[ConfigurePlan] = []
+    for plan in plans:
+        if plan.output_folder not in seen_conan:
+            seen_conan.add(plan.output_folder)
+            deduped_conan.append(plan)
+
+    print(f"Presets: {len(plans)} visible, {len(deduped_conan)} unique conan output(s)", flush=True)
+
+    if dry_run:
+        for plan in deduped_conan:
+            print_command(plan.conan_command)
+        for plan in plans:
+            print_command(plan.cmake_command)
+        return 0
+
+    # Phase 1: conan install (deduped)
+    conan_failures = 0
+    for plan in deduped_conan:
+        try:
+            run_command(plan.conan_command, repo_root)
+        except subprocess.CalledProcessError as error:
+            print(f"conan install failed for {plan.preset_name}: {error}", file=sys.stderr)
+            if continue_on_error:
+                conan_failures += 1
+            else:
+                return error.returncode
+
+    # Phase 2: cmake --preset (all)
+    cmake_failures = 0
+    for plan in plans:
+        try:
+            run_command(plan.cmake_command, repo_root)
+        except subprocess.CalledProcessError as error:
+            print(f"cmake failed for {plan.preset_name}: {error}", file=sys.stderr)
+            if continue_on_error:
+                cmake_failures += 1
+            else:
+                return error.returncode
+
+    total_failures = conan_failures + cmake_failures
+    if total_failures > 0:
+        print(f"{total_failures} failure(s), {len(plans)} preset(s) total", file=sys.stderr)
+        return 1
+
+    return 0
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run Conan install for a CMake configure preset, then run cmake --preset."
     )
-    parser.add_argument("preset", help="CMake configure preset name, for example debug or release")
+    parser.add_argument(
+        "preset", nargs="?", help="CMake configure preset name, for example debug or release"
+    )
+    parser.add_argument(
+        "--all-presets",
+        action="store_true",
+        help="Configure all visible (non-hidden) presets",
+    )
     parser.add_argument(
         "--profile",
         type=pathlib.Path,
@@ -193,18 +288,43 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="Print the conan and cmake commands without running them",
     )
+    parser.add_argument(
+        "--continue-on-error",
+        action="store_true",
+        help="Keep going if a conan install or cmake preset fails",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
+
     if args.profile and (args.host_profile or args.build_profile):
         print("error: use either --profile or --host-profile/--build-profile, not both", file=sys.stderr)
+        return 2
+
+    if args.all_presets and args.preset:
+        print("error: specify either a preset name or --all-presets, not both", file=sys.stderr)
+        return 2
+
+    if not args.all_presets and not args.preset:
+        print("error: specify a preset name or --all-presets", file=sys.stderr)
         return 2
 
     repo_root = repo_root_from_script()
     host_profile = args.host_profile or args.profile
     build_profile = args.build_profile or args.profile
+    build_missing = not args.no_build_missing
+
+    if args.all_presets:
+        return run_all_presets(
+            repo_root=repo_root,
+            host_profile=host_profile,
+            build_profile=build_profile,
+            build_missing=build_missing,
+            dry_run=args.dry_run,
+            continue_on_error=args.continue_on_error,
+        )
 
     try:
         plan = create_plan(
@@ -212,7 +332,7 @@ def main(argv: list[str]) -> int:
             preset_name=args.preset,
             host_profile=host_profile,
             build_profile=build_profile,
-            build_missing=not args.no_build_missing,
+            build_missing=build_missing,
         )
     except (OSError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
@@ -232,5 +352,9 @@ def main(argv: list[str]) -> int:
     return 0
 
 
-if __name__ == "__main__":
+def main_cli() -> None:
     raise SystemExit(main(sys.argv[1:]))
+
+
+if __name__ == "__main__":
+    main_cli()
