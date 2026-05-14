@@ -207,10 +207,16 @@ jobs:
         shell: pwsh
         run: .\scripts\install-onemkl\install-onemkl-windows.ps1
 
+      - name: Get nanobind CMake directory
+        id: nanobind
+        shell: bash
+        run: echo "dir=$(uv run python -m nanobind --cmake_dir)" >> "$GITHUB_OUTPUT"
+
       - name: Configure Python package preset
         env:
           CC: ${{ matrix.cc }}
           CXX: ${{ matrix.cxx }}
+          nanobind_DIR: ${{ steps.nanobind.outputs.dir }}
         run: uv run python scripts/pgo_configure.py ${{ matrix.preset }} --profile ${{ matrix.profile }}
 
       - name: Build wheel

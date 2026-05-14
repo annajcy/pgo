@@ -1,3 +1,22 @@
+# Prefer the project-local venv Python so dependencies like nanobind are discoverable.
+if(NOT Python_EXECUTABLE AND EXISTS "${PROJECT_SOURCE_DIR}/.venv")
+    if(WIN32)
+        find_program(_pgo_python NAMES python python3
+            PATHS "${PROJECT_SOURCE_DIR}/.venv/Scripts"
+            NO_DEFAULT_PATH
+        )
+    else()
+        find_program(_pgo_python NAMES python3 python
+            PATHS "${PROJECT_SOURCE_DIR}/.venv/bin"
+            NO_DEFAULT_PATH
+        )
+    endif()
+    if(_pgo_python)
+        set(Python_EXECUTABLE "${_pgo_python}" CACHE FILEPATH "Python executable from project-local venv")
+    endif()
+    unset(_pgo_python)
+endif()
+
 find_package(Python 3.10 REQUIRED COMPONENTS Interpreter Development.Module OPTIONAL_COMPONENTS Development.SABIModule)
 
 if(NOT nanobind_DIR)
