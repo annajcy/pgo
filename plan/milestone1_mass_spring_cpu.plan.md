@@ -465,7 +465,7 @@ README 使用 `uv tool install conan` / `uv tool install ninja` 管理 Python to
 - `windows-latest` + `conan/profiles/windows-x86_64-msvc`
 - `ubuntu-latest` ASan/UBSan
 
-Phase 0 CI 只做 configure/build。等 Phase 1 创建 `tests/CMakeLists.txt` 后，Phase 7 再把 `ctest` 加回 CI。
+Phase 0 CI 只做 configure/build。等 Phase 1 创建 `tests/CMakeLists.txt` 后，Phase 8 再把 `ctest` 加回 CI。
 
 
 ## Phase 0.5: Eigen CPU acceleration 配置层
@@ -3638,7 +3638,7 @@ cmake --build --preset debug
 ctest --preset debug -R "Log|Registry|NullSink"
 ```
 
-- [ ] **Step 3: README 记录 logging 边界**
+- [x] **Step 3: README 记录 logging 边界**
 
 添加：
 
@@ -3731,7 +3731,7 @@ namespace pgo::solver {
 - 修改: `examples/CMakeLists.txt`
 - 创建: `examples/mass_spring_cloth.cpp`（stub，Task 5.3 替换为真实实现）
 
-- [ ] **Step 1: 创建 example target**
+- [x] **Step 1: 创建 example target**
 
 ```cmake
 add_executable(pgo_mass_spring_cloth mass_spring_cloth.cpp)
@@ -3740,7 +3740,7 @@ target_link_libraries(pgo_mass_spring_cloth PRIVATE pgo::core pgo::io CLI11::CLI
 
 保留已有 `add_subdirectory(io)`。
 
-- [ ] **Step 2: 创建 stub `mass_spring_cloth.cpp`**
+- [x] **Step 2: 创建 stub `mass_spring_cloth.cpp`**
 
 `int main() { return 0; }`，保证 CMake configure 不因缺失源文件而失败。Task 5.3 替换为真实实现。
 
@@ -3752,7 +3752,7 @@ target_link_libraries(pgo_mass_spring_cloth PRIVATE pgo::core pgo::io CLI11::CLI
 **文件:**
 - 创建: `examples/mass_spring_cloth.cpp`
 
-- [ ] **Step 1: 实现 CLI**
+- [x] **Step 1: 实现 CLI**
 
 参数：
 
@@ -3778,7 +3778,7 @@ target_link_libraries(pgo_mass_spring_cloth PRIVATE pgo::core pgo::io CLI11::CLI
 - 使用 Phase 4 的 `BackwardEuler<T>::step(...)` 求解一个动态 timestep。
 - 使用 `ObjFrameWriter3d` 写出 OBJ frame。
 
-- [ ] **Step 2: 固定 frame 输出语义**
+- [x] **Step 2: 固定 frame 输出语义**
 
 语义：
 
@@ -3787,7 +3787,7 @@ target_link_libraries(pgo_mass_spring_cloth PRIVATE pgo::core pgo::io CLI11::CLI
 - 后续 `N - 1` 个 frame 每次 successful `BackwardEuler::step(...)` 后写出。
 - 默认 `--ramp-frames` 可以取 `min(20, frames - 1)`；显式传参时要求非负。
 
-- [ ] **Step 3: solver failure 处理**
+- [x] **Step 3: solver failure 处理**
 
 每帧 step 后检查结果：
 
@@ -3811,7 +3811,7 @@ if (result.status != pgo::solver::SolverStatus::converged) {
 - `BackwardEuler` 默认只在 converged 时 commit state；failure 时 example 不应写出半失败状态。
 - 打印使用 `pgo::log` + `<format>`；默认 backend 不要求 spdlog。
 
-- [ ] **Step 4: 构建并运行 example**
+- [x] **Step 4: 构建并运行 example**
 
 ```bash
 cmake --build --preset debug --target pgo_mass_spring_cloth
@@ -3852,201 +3852,13 @@ cmake --build --preset debug --target pgo_obj_frames_to_abc
 期望：写出 `output/example/bunny.abc`，并打印 frame、vertex、face、fps、output summary。
 
 
-## Phase 6: C99 / Python API 独立计划
+## Phase 6: Breaking Core Header Layout Refactor
 
-Milestone 1 的 C99 ABI facade 已拆分到独立计划：
+**当前状态:** 待实现。这个 phase 应在 C/Python API（Phase 7）之前完成，避免 API 代码写完后还要改 include path。
 
-```text
-plan/c_py_api.md
-```
+**Phase 6 目标:** 将 numerical/simulation core 的 public headers 统一迁移到 `include/pgo/core/...`，让 `io`、`log` 和 core 的边界在文件系统层面也清晰可见。C/Python API headers 由 `plan/c_py_api.md` 单独负责。
 
-Milestone 1 core、IO、logging、example pipeline 仍然需要保持 C/Python API 友好的边界：core 不暴露 STL/Eigen/template 类型到二进制接口，C++ exceptions 不跨 ABI 边界，`include/pgo_c` 和 Python package 不进入 `include/pgo/core`。
-
-执行顺序建议：先完成 Phase 5 的 reusable force/status helpers 和 example pipeline，再按 `plan/c_py_api.md` 实现 C99 ABI、nanobind Python API、wheel packaging 和发布变体。
-
-
-## Phase 7: CI 和验证
-
-### Task 7.1: 升级 GitHub Actions CI 为全平台 build/test/benchmark
-
-**文件:**
-- 修改: `.github/workflows/ci.yml`
-
-**当前状态:** 已完成。CI 重写为 2 个 job，覆盖所有平台 × preset 组合，包含 benchmark。
-
-- [x] **CI 结构**
-
-两个 job，共享平台映射。`needs_mkl` 通过 `contains(preset, 'accel') && runner.os != 'macOS'` 自动推导。
-
-**`build-and-test` job** — Debug 系 preset，全平台 build + test (3 × 5 = 15 jobs)：
-
-| Preset | 验证点 |
-|--------|--------|
-| `debug` | 基线 build + 全量 test |
-| `debug-asan` | sanitizers (ASan/UBSan)，全平台 |
-| `debug-all` | optional deps (spdlog + Alembic) |
-| `debug-accel` | Eigen acceleration (MKL/Accelerate) |
-| `debug-accel-all` | accel + optional deps 交互 |
-
-**`release` job** — Release 系 preset，全平台 build + test + benchmark (3 × 2 = 6 jobs)：
-
-| Preset | 验证点 |
-|--------|--------|
-| `release` | 基线 release build + test + benchmark |
-| `release-accel` | release + accel + benchmark |
-
-**步骤：** checkout → cmake → toolchain → conan → configure → build → test → [build benchmark → run benchmark (release only)]
-
-**平台映射：**
-
-| OS | Profile | CC | CXX |
-|----|---------|-----|------|
-| ubuntu-latest | ubuntu-x86_64-gcc | gcc-13 | g++-13 |
-| macos-latest | macos-arm64-apple-clang | cc | c++ |
-| windows-latest | windows-x86_64-msvc | cl | cl |
-
-### Task 7.1b: 工具链增强（已完成）
-
-**`scripts/pgo_configure.py`:**
-- 新增 `--all-presets` — 一键配置全部 16 个 visible preset，conan output folder 自动去重（16 preset → 8 `conan install`）
-- 新增 `--continue-on-error` — 单个 preset 失败不中止
-- 修复 multi-inheritance 时 `cacheVariables` key-by-key merge bug
-
-**`pyproject.toml` + `uv.lock`:**
-- 新增 `[project.scripts]` entry point：`uv run pgo-configure` 替代 `uv run python scripts/pgo_configure.py`
-- `uv.lock` 锁定 Python 依赖（纯 stdlib，依赖为空）
-- README 和 CI 全部改用 `uv run pgo-configure`
-
-
-### Task 7.2: 添加 README 构建说明
-
-**文件:**
-- 创建: `README.md`
-
-- [ ] **Step 1: 写入本地构建命令**
-
-README 至少包含：
-
-````markdown
-# pgo
-
-GPU-aware C++23 PGO learning and refactoring project.
-
-## Milestone 1
-
-Milestone 1 builds a CPU mass-spring solver around explicit rest positions `X`,
-displacement unknowns `u`, local energy assembly, Newton solving, OBJ frame output,
-and clean boundaries for the separate C/Python API plan.
-
-## Local Build
-
-```bash
-uv tool install conan
-conan install . \
-  --profile:host=conan/profiles/default \
-  --profile:build=conan/profiles/default \
-  --output-folder=build/conan/debug \
-  --build=missing \
-  -s:h build_type=Debug
-cmake --preset debug
-cmake --build --preset debug
-ctest --preset debug
-```
-
-## Example
-
-```bash
-./build/debug/examples/pgo_mass_spring_cloth --input examples/assets/cloth_grid.obj --output frames --frames 20
-```
-````
-
-
-## Phase 8: GPU-Awareness 和 Core Boundary Review Gate
-
-### Task 8.1: 检查 GPU-aware 约束
-
-**文件:**
-- 修改: `README.md`
-
-- [ ] **Step 1: 检查 geometry/storage 不泄漏 Eigen object storage**
-
-```bash
-rg "std::vector<.*Eigen|Eigen::Vector[234]|Eigen::Matrix<.*Dynamic" include/pgo/geometry include/pgo/storage
-```
-
-期望：无匹配，除了 `include/pgo/math` 中允许的 math aliases。
-
-- [ ] **Step 2: 检查 solver variable 命名**
-
-```bash
-rg "current.*unknown|position.*unknown|optimize.*position|solver.* x" include examples tests
-```
-
-期望：没有文档或代码把 position 说成 solver unknown。未知量应命名为 `u`、`free_u`、`du`。
-
-- [ ] **Step 3: 检查 local energy API**
-
-```bash
-rg "local_count|local_dofs|local_value|local_gradient|local_hessian" include/pgo/energy include/pgo/assembly
-```
-
-期望：energy/assembly 中存在 local contribution API。
-
-- [ ] **Step 4: README 记录 GPU backend 方向**
-
-添加：
-
-```markdown
-## GPU Backend Direction
-
-The CPU implementation keeps mesh data flat and energy evaluation local-contribution based.
-This is intentional: a Vulkan/Slang backend can dispatch one work item per spring, element,
-or contact candidate while reusing the same semantic model.
-```
-
-
-### Task 8.2: 检查 C/Python API readiness 边界
-
-**文件:**
-- 修改: `README.md`
-
-- [ ] **Step 1: 检查 core public headers 不依赖 API layer**
-
-```bash
-rg 'pgo_c/|nanobind|Python\\.h|numpy' include/pgo src examples tests
-```
-
-期望：无匹配；Milestone 1 core、IO、log、examples/tests 不依赖 C/Python API package。
-
-- [ ] **Step 2: README 记录 API 分层**
-
-添加：
-
-```markdown
-## C And Python API Plan
-
-The C99 shared-library ABI and nanobind Python package are tracked separately in
-`plan/c_py_api.md`. Milestone 1 keeps the simulation core API-friendly by avoiding
-STL/Eigen/template objects as binary interfaces and by keeping Python/nanobind out
-of `pgo::core`.
-```
-
-- [ ] **Step 3: 确认独立 API plan 存在**
-
-```bash
-test -f plan/c_py_api.md
-rg "C99 And Python API Implementation Plan|nanobind|pgo_world_t|release-accel-all" plan/c_py_api.md
-```
-
-期望：`plan/c_py_api.md` 存在，并记录 C99 ABI、nanobind Python API、package variants。
-
-## Phase 9: Breaking Core Header Layout Refactor
-
-**当前状态:** 待实现。这个 phase 是 Milestone 1 的最后整理步骤，发生在 Phase 8 GPU-awareness / core boundary review gate 之后、进入 Milestone 2 之前。
-
-**Phase 9 目标:** 将 numerical/simulation core 的 public headers 统一迁移到 `include/pgo/core/...`，让 `io`、`log` 和 core 的边界在文件系统层面也清晰可见。C/Python API headers 由 `plan/c_py_api.md` 单独负责。
-
-**Breaking-change 决策:** 不创建 compatibility headers。旧路径如 `pgo/energy/reduced_energy.hpp`、`pgo/solver/newton_solver.hpp`、`pgo/geometry/rest_mesh.hpp` 在 Phase 9 后直接不存在；所有 repo 内部 include、examples、tests、tools 一次性迁移到 `pgo/core/...`。
+**Breaking-change 决策:** 不创建 compatibility headers。旧路径如 `pgo/energy/reduced_energy.hpp`、`pgo/solver/newton_solver.hpp`、`pgo/geometry/rest_mesh.hpp` 在 Phase 6 后直接不存在；所有 repo 内部 include、examples、tests、tools 一次性迁移到 `pgo/core/...`。
 
 最终 public include layout：
 
@@ -4074,7 +3886,7 @@ include/pgo/
 - `plan/c_py_api.md` 后续创建的 `include/pgo_c` 保持 C ABI public header 根目录，不进入 `include/pgo/core`。
 - 不留下旧路径 forwarding headers，避免虚假的双入口 API。
 
-### Task 9.1: 移动 core headers
+### Task 6.1: 移动 core headers
 
 **文件:**
 - 移动: `include/pgo/base/*` -> `include/pgo/core/base/*`
@@ -4120,7 +3932,7 @@ test ! -d include/pgo/integrator
 
 期望：全部 exit 0。不要创建 `include/pgo/energy/foo.hpp` 这种 forwarding header。
 
-### Task 9.2: 更新 include paths
+### Task 6.2: 更新 include paths
 
 **文件:**
 - 修改: `include/pgo/core/**/*.hpp`
@@ -4178,7 +3990,7 @@ rg '#include "pgo/core/(base|math|storage|geometry|dof|assembly|energy|solver|in
 
 期望：能看到 core modules 的内部和调用侧 include。
 
-### Task 9.3: 更新 CMake / docs / plan references
+### Task 6.3: 更新 CMake / docs / plan references
 
 **文件:**
 - 修改: `README.md`
@@ -4226,9 +4038,9 @@ include/pgo/core/base include/pgo/core/math ...
 rg 'pgo/(base|math|storage|geometry|dof|assembly|energy|solver|integrator)/' README.md plan .github
 ```
 
-期望：除非是在 Phase 9 migration 说明的 “旧路径” 示例中，否则无匹配。
+期望：除非是在 Phase 6 migration 说明的 “旧路径” 示例中，否则无匹配。
 
-### Task 9.4: 构建验证 breaking layout
+### Task 6.4: 构建验证 breaking layout
 
 **文件:**
 - 修改: `compile_commands.json`（由构建生成，不手动编辑）
@@ -4280,10 +4092,198 @@ rg "std::vector<.*Eigen|Eigen::Vector[234]|Eigen::Matrix<.*Dynamic" include/pgo/
 
 ```bash
 cmake --build --preset debug --target pgo_mass_spring_cloth
-./build/debug/examples/pgo_mass_spring_cloth --frames 5 --resolution 8 --output output/phase9-smoke
+./build/debug/examples/pgo_mass_spring_cloth --frames 5 --resolution 8 --output output/phase6-smoke
 ```
 
-期望：写出 `output/phase9-smoke/frame_0000.obj` 到 `frame_0004.obj`。
+期望：写出 `output/phase6-smoke/frame_0000.obj` 到 `frame_0004.obj`。
+
+## Phase 7: C99 / Python API 独立计划
+
+Milestone 1 的 C99 ABI facade 已拆分到独立计划：
+
+```text
+plan/c_py_api.md
+```
+
+Milestone 1 core、IO、logging、example pipeline 仍然需要保持 C/Python API 友好的边界：core 不暴露 STL/Eigen/template 类型到二进制接口，C++ exceptions 不跨 ABI 边界，`include/pgo_c` 和 Python package 不进入 `include/pgo/core`。
+
+执行顺序建议：先完成 Phase 5 的 reusable force/status helpers 和 example pipeline，再执行 Phase 6 的 header layout refactor（将 core headers 迁移到 `include/pgo/core/`），然后按 `plan/c_py_api.md` 实现 C99 ABI、nanobind Python API、wheel packaging 和发布变体。
+
+
+## Phase 8: CI 和验证
+
+### Task 8.1: 升级 GitHub Actions CI 为全平台 build/test/benchmark
+
+**文件:**
+- 修改: `.github/workflows/ci.yml`
+
+**当前状态:** 已完成。CI 重写为 2 个 job，覆盖所有平台 × preset 组合，包含 benchmark。
+
+- [x] **CI 结构**
+
+两个 job，共享平台映射。`needs_mkl` 通过 `contains(preset, 'accel') && runner.os != 'macOS'` 自动推导。
+
+**`build-and-test` job** — Debug 系 preset，全平台 build + test (3 × 5 = 15 jobs)：
+
+| Preset | 验证点 |
+|--------|--------|
+| `debug` | 基线 build + 全量 test |
+| `debug-asan` | sanitizers (ASan/UBSan)，全平台 |
+| `debug-all` | optional deps (spdlog + Alembic) |
+| `debug-accel` | Eigen acceleration (MKL/Accelerate) |
+| `debug-accel-all` | accel + optional deps 交互 |
+
+**`release` job** — Release 系 preset，全平台 build + test + benchmark (3 × 2 = 6 jobs)：
+
+| Preset | 验证点 |
+|--------|--------|
+| `release` | 基线 release build + test + benchmark |
+| `release-accel` | release + accel + benchmark |
+
+**步骤：** checkout → cmake → toolchain → conan → configure → build → test → [build benchmark → run benchmark (release only)]
+
+**平台映射：**
+
+| OS | Profile | CC | CXX |
+|----|---------|-----|------|
+| ubuntu-latest | ubuntu-x86_64-gcc | gcc-13 | g++-13 |
+| macos-latest | macos-arm64-apple-clang | cc | c++ |
+| windows-latest | windows-x86_64-msvc | cl | cl |
+
+### Task 8.1b: 工具链增强（已完成）
+
+**`scripts/pgo_configure.py`:**
+- 新增 `--all-presets` — 一键配置全部 16 个 visible preset，conan output folder 自动去重（16 preset → 8 `conan install`）
+- 新增 `--continue-on-error` — 单个 preset 失败不中止
+- 修复 multi-inheritance 时 `cacheVariables` key-by-key merge bug
+
+**`pyproject.toml` + `uv.lock`:**
+- 新增 `[project.scripts]` entry point：`uv run pgo-configure` 替代 `uv run python scripts/pgo_configure.py`
+- `uv.lock` 锁定 Python 依赖（纯 stdlib，依赖为空）
+- README 和 CI 全部改用 `uv run pgo-configure`
+
+
+### Task 8.2: 添加 README 构建说明
+
+**文件:**
+- 创建: `README.md`
+
+- [x] **Step 1: 写入本地构建命令**
+
+README 至少包含：
+
+````markdown
+# pgo
+
+GPU-aware C++23 PGO learning and refactoring project.
+
+## Milestone 1
+
+Milestone 1 builds a CPU mass-spring solver around explicit rest positions `X`,
+displacement unknowns `u`, local energy assembly, Newton solving, OBJ frame output,
+and clean boundaries for the separate C/Python API plan.
+
+## Local Build
+
+```bash
+uv tool install conan
+conan install . \
+  --profile:host=conan/profiles/default \
+  --profile:build=conan/profiles/default \
+  --output-folder=build/conan/debug \
+  --build=missing \
+  -s:h build_type=Debug
+cmake --preset debug
+cmake --build --preset debug
+ctest --preset debug
+```
+
+## Example
+
+```bash
+./build/debug/examples/pgo_mass_spring_cloth --input examples/assets/cloth_grid.obj --output frames --frames 20
+```
+````
+
+
+## Phase 9: GPU-Awareness 和 Core Boundary Review Gate
+
+### Task 9.1: 检查 GPU-aware 约束
+
+**文件:**
+- 修改: `README.md`
+
+- [x] **Step 1: 检查 geometry/storage 不泄漏 Eigen object storage**
+
+```bash
+rg "std::vector<.*Eigen|Eigen::Vector[234]|Eigen::Matrix<.*Dynamic" include/pgo/geometry include/pgo/storage
+```
+
+期望：无匹配，除了 `include/pgo/math` 中允许的 math aliases。
+
+- [x] **Step 2: 检查 solver variable 命名**
+
+```bash
+rg "current.*unknown|position.*unknown|optimize.*position|solver.* x" include examples tests
+```
+
+期望：没有文档或代码把 position 说成 solver unknown。未知量应命名为 `u`、`free_u`、`du`。
+
+- [x] **Step 3: 检查 local energy API**
+
+```bash
+rg "local_count|local_dofs|local_value|local_gradient|local_hessian" include/pgo/energy include/pgo/assembly
+```
+
+期望：energy/assembly 中存在 local contribution API。
+
+- [ ] **Step 4: README 记录 GPU backend 方向**
+
+添加：
+
+```markdown
+## GPU Backend Direction
+
+The CPU implementation keeps mesh data flat and energy evaluation local-contribution based.
+This is intentional: a Vulkan/Slang backend can dispatch one work item per spring, element,
+or contact candidate while reusing the same semantic model.
+```
+
+
+### Task 9.2: 检查 C/Python API readiness 边界
+
+**文件:**
+- 修改: `README.md`
+
+- [x] **Step 1: 检查 core public headers 不依赖 API layer**
+
+```bash
+rg 'pgo_c/|nanobind|Python\\.h|numpy' include/pgo src examples tests
+```
+
+期望：无匹配；Milestone 1 core、IO、log、examples/tests 不依赖 C/Python API package。
+
+- [ ] **Step 2: README 记录 API 分层**
+
+添加：
+
+```markdown
+## C And Python API Plan
+
+The C99 shared-library ABI and nanobind Python package are tracked separately in
+`plan/c_py_api.md`. Milestone 1 keeps the simulation core API-friendly by avoiding
+STL/Eigen/template objects as binary interfaces and by keeping Python/nanobind out
+of `pgo::core`.
+```
+
+- [x] **Step 3: 确认独立 API plan 存在**
+
+```bash
+test -f plan/c_py_api.md
+rg "C99 And Python API Implementation Plan|nanobind|pgo_world_t|release-accel-all" plan/c_py_api.md
+```
+
+期望：`plan/c_py_api.md` 存在，并记录 C99 ABI、nanobind Python API、package variants。
 
 ## Milestone 1 完成标准
 
@@ -4317,9 +4317,9 @@ cmake --build --preset debug --target pgo_mass_spring_cloth
 6. 完成 Phase 4，先用 quadratic system 验证 solver，再跑 mass-spring。
 7. 完成 Phase 4.6，补上 `pgo::log` facade，让 Phase 5 example/tool 和后续 API bridge 使用统一日志边界。
 8. 完成 Phase 5，生成 OBJ frames。
-9. 完成 Phase 6，确认 C/Python API 已由 `plan/c_py_api.md` 独立追踪。
-10. 完成 Phase 7 和 Phase 8，收紧 CI、GPU-aware 和 core boundary review gate。
-11. 完成 Phase 9，执行 breaking core header layout refactor，不保留旧 include compatibility headers。
+9. 完成 Phase 6，执行 breaking core header layout refactor，将 headers 迁移到 `include/pgo/core/`，不保留旧 include compatibility headers。
+10. 完成 Phase 7，按 `plan/c_py_api.md` 实现 C99 ABI、nanobind Python API、wheel packaging 和发布变体。
+11. 完成 Phase 8 和 Phase 9，收紧 CI、GPU-aware 和 core boundary review gate。
 12. 完成 Milestone 1 后，再进入 Milestone 2 GPU backend。
 
 ## 自检记录

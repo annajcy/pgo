@@ -5,6 +5,7 @@
 #    include "pgo/log/sink.hpp"
 
 #    include <memory>
+#    include <string>
 
 namespace spdlog {
 class logger;
