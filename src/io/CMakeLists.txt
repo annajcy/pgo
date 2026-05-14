@@ -8,6 +8,10 @@ if(PGO_ENABLE_ALEMBIC)
 endif()
 add_library(pgo::io ALIAS pgo_io)
 
+set_target_properties(pgo_io PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+)
+
 target_compile_features(pgo_io PUBLIC cxx_std_23)
 target_include_directories(pgo_io PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>

@@ -16,11 +16,15 @@ uv tool install ninja
 uv tool install conan
 ```
 
-After cloning, sync the project's Python environment (installs the `pgo-configure` entry point):
+After cloning, sync Python tooling:
 
 ```bash
 uv sync
 ```
+
+The project sets `package = false` so uv does not attempt to auto-build `pgo`.
+The Python package depends on Conan-generated CMake toolchain files and must be
+installed explicitly after `pgo_configure.py` (see [Python Package](#python-package)).
 
 ## Conan Profiles
 
@@ -73,6 +77,8 @@ compiler flags and do not change the dependency graph.
 | `release-accel` | Release | ✓ | | |
 | `release-all` | Release | | ✓ | |
 | `release-accel-all` | Release | ✓ | ✓ | |
+| `pypgo-release-all` | Release | | ✓ | |
+| `pypgo-release-accel-all` | Release | ✓ | ✓ | |
 | `release-asan` | Release | | | ✓ |
 | `release-accel-asan` | Release | ✓ | | ✓ |
 | `release-all-asan` | Release | | ✓ | ✓ |
@@ -83,7 +89,7 @@ compiler flags and do not change the dependency graph.
 Configure, build, and run tests:
 
 ```bash
-uv run pgo-configure debug --build  # install Conan deps + cmake --preset + cmake --build
+uv run python scripts/pgo_configure.py debug --build  # install Conan deps + cmake --preset + cmake --build
 ctest --preset debug                # run tests
 ```
 
@@ -91,7 +97,7 @@ Without `--build`, only configure runs — useful when you want to inspect or tw
 before compiling:
 
 ```bash
-uv run pgo-configure debug      # install Conan deps + cmake --preset
+uv run python scripts/pgo_configure.py debug      # install Conan deps + cmake --preset
 cmake --build --preset debug    # compile
 ctest --preset debug            # run tests
 ```
@@ -100,34 +106,34 @@ Choose a different preset to switch configurations.
 Configure only:
 
 ```bash
-uv run pgo-configure release
-uv run pgo-configure debug-asan
-uv run pgo-configure debug-all
-uv run pgo-configure debug-accel
+uv run python scripts/pgo_configure.py release
+uv run python scripts/pgo_configure.py debug-asan
+uv run python scripts/pgo_configure.py debug-all
+uv run python scripts/pgo_configure.py debug-accel
 ```
 
 Or configure + build in one step with `--build`:
 
 ```bash
-uv run pgo-configure release --build
-uv run pgo-configure debug-asan --build
-uv run pgo-configure debug-all --build
-uv run pgo-configure debug-accel --build
+uv run python scripts/pgo_configure.py release --build
+uv run python scripts/pgo_configure.py debug-asan --build
+uv run python scripts/pgo_configure.py debug-all --build
+uv run python scripts/pgo_configure.py debug-accel --build
 ```
 
 Configure every visible preset at once:
 
 ```bash
-uv run pgo-configure --all-presets
+uv run python scripts/pgo_configure.py --all-presets
 ```
 
 Add `--build` to compile all of them too:
 
 ```bash
-uv run pgo-configure --all-presets --build
+uv run python scripts/pgo_configure.py --all-presets --build
 ```
 
-See [Preset Reference](#preset-reference) for the full 16-preset matrix.
+See [Preset Reference](#preset-reference) for the full 18-preset matrix.
 
 ## Acceleration
 
@@ -142,14 +148,14 @@ See [Preset Reference](#preset-reference) for the full 16-preset matrix.
 Configure + build in one step:
 
 ```bash
-uv run pgo-configure debug-accel --build
+uv run python scripts/pgo_configure.py debug-accel --build
 ctest --preset debug-accel
 ```
 
 Or step by step:
 
 ```bash
-uv run pgo-configure debug-accel
+uv run python scripts/pgo_configure.py debug-accel
 cmake --build --preset debug-accel
 ctest --preset debug-accel
 ```
@@ -160,7 +166,7 @@ Benchmarks use Google Benchmark and are not registered as `ctest` tests (results
 are machine-dependent). Build and run with a release preset:
 
 ```bash
-uv run pgo-configure release
+uv run python scripts/pgo_configure.py release
 cmake --build --preset release --target pgo_benchmarks
 ./build/release/benchmarks/pgo_benchmarks
 ```
@@ -168,9 +174,41 @@ cmake --build --preset release --target pgo_benchmarks
 Accelerated benchmarks:
 
 ```bash
-uv run pgo-configure release-accel
+uv run python scripts/pgo_configure.py release-accel
 cmake --build --preset release-accel --target pgo_benchmarks
 ./build/release-accel/benchmarks/pgo_benchmarks
+```
+
+## Python Package
+
+The Python package wraps `pgo_c` via nanobind. Install in editable mode after
+configuring with a C-API-enabled preset:
+
+```bash
+python scripts/pgo_configure.py debug
+uv pip install -e . --no-build-isolation \
+  -Ccmake.build-type=Debug \
+  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/debug/conan_toolchain.cmake
+uv run pytest tests/python -q
+```
+
+For the accelerated variant:
+
+```bash
+python scripts/pgo_configure.py debug-accel
+uv pip install -e . --no-build-isolation \
+  -Ccmake.build-type=Debug \
+  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/debug-accel/conan_toolchain.cmake \
+  -Ccmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON
+uv run pytest tests/python -q
+```
+
+Build a release wheel:
+
+```bash
+python scripts/pgo_configure.py pypgo-release-all
+uv build --wheel -Ccmake.build-type=Release \
+  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release-all/conan_toolchain.cmake
 ```
 
 ## Header Layout

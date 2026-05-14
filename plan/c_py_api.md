@@ -150,6 +150,7 @@ Add this hidden configure preset near the existing hidden `base`/`rel`/`accel` p
 {
   "name": "pypgo",
   "hidden": true,
+  "generator": "Ninja",
   "cacheVariables": {
     "PGO_BUILD_TESTS": "OFF",
     "PGO_BUILD_EXAMPLES": "OFF",
@@ -175,34 +176,34 @@ Add these visible configure presets after the existing release presets:
 
 ```json
 {
-  "name": "pypgo-release",
-  "displayName": "Python Package Release",
-  "inherits": ["base", "rel", "pypgo"],
-  "binaryDir": "${sourceDir}/build/pypgo-release",
+  "name": "pypgo-release-all",
+  "displayName": "Python Package Release + All",
+  "inherits": ["rel", "all-opt", "pypgo"],
+  "binaryDir": "${sourceDir}/build/pypgo-release-all",
   "cacheVariables": {
-    "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/pypgo-release/conan_toolchain.cmake"
+    "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/pypgo-release-all/conan_toolchain.cmake"
   }
 },
 {
-  "name": "pypgo-release-accel",
-  "displayName": "Python Package Release + Accel",
-  "inherits": ["base", "rel", "accel", "pypgo"],
-  "binaryDir": "${sourceDir}/build/pypgo-release-accel",
+  "name": "pypgo-release-accel-all",
+  "displayName": "Python Package Release + Accel + All",
+  "inherits": ["rel", "accel", "all-opt", "pypgo"],
+  "binaryDir": "${sourceDir}/build/pypgo-release-accel-all",
   "cacheVariables": {
-    "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/pypgo-release-accel/conan_toolchain.cmake"
+    "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/pypgo-release-accel-all/conan_toolchain.cmake"
   }
 }
 ```
 
-Ordering matters: `pypgo` must be the last parent so it overrides `base` and turns off tests/examples/tools/benchmarks.
+Ordering matters: `all-opt` makes the package presets match `release-all` / `release-accel-all`, while `pypgo` must be the last parent so it turns off tests/examples/tools/benchmarks.
 
 - [ ] **Step 3: Add matching build presets**
 
 Add these entries to `buildPresets`:
 
 ```json
-{ "name": "pypgo-release", "configurePreset": "pypgo-release" },
-{ "name": "pypgo-release-accel", "configurePreset": "pypgo-release-accel" }
+{ "name": "pypgo-release-all", "configurePreset": "pypgo-release-all" },
+{ "name": "pypgo-release-accel-all", "configurePreset": "pypgo-release-accel-all" }
 ```
 
 Do not add `testPresets` for `pypgo-*`; these presets intentionally build only the Python package runtime surface, so package verification lives in `uv run pytest tests/python -q`.
@@ -212,15 +213,16 @@ Do not add `testPresets` for `pypgo-*`; these presets intentionally build only t
 Run:
 
 ```bash
-python scripts/pgo_configure.py pypgo-release --dry-run
-python scripts/pgo_configure.py pypgo-release-accel --dry-run
+python scripts/pgo_configure.py pypgo-release-all --dry-run
+python scripts/pgo_configure.py pypgo-release-accel-all --dry-run
 ```
 
 Expected:
 
-- `pypgo-release` uses `build/conan/pypgo-release/conan_toolchain.cmake`.
-- `pypgo-release-accel` uses `build/conan/pypgo-release-accel/conan_toolchain.cmake`.
-- `pypgo-release-accel` carries `PGO_ENABLE_EIGEN_ACCELERATION=ON` through the CMake preset.
+- `pypgo-release-all` uses `build/conan/pypgo-release-all/conan_toolchain.cmake`.
+- `pypgo-release-accel-all` uses `build/conan/pypgo-release-accel-all/conan_toolchain.cmake`.
+- Both package presets carry the `all-opt` Conan options for spdlog and Alembic.
+- `pypgo-release-accel-all` carries `PGO_ENABLE_EIGEN_ACCELERATION=ON` through the CMake preset.
 
 ### Task 1.3: Move Python Packaging To scikit-build-core
 
@@ -248,7 +250,7 @@ dependencies = [
 pgo-configure = "scripts.pgo_configure:main_cli"
 
 [tool.uv]
-package = true
+package = false
 
 [build-system]
 requires = [
@@ -277,10 +279,10 @@ PGO_ENABLE_PYTHON_STABLE_ABI = false
 
 Notes:
 
+- `package = false` tells uv to skip auto-sync on `uv run`. The Python package depends on Conan-provided CMake toolchain files, so uv cannot reliably build it in an isolated environment. Users install explicitly with `uv pip install -e .`.
 - scikit-build-core automatically looks for packages under `python/<package>`.
 - `install.components = ["python"]` keeps the wheel from accidentally installing the C SDK headers/dev archive component.
 - Wheel builds disable tests/examples/tools/benchmarks so build isolation does not need GTest, CLI11, benchmark, or example-only targets.
-- Packaging docs call `python scripts/pgo_configure.py pypgo-release...` directly before release `uv build`. After switching the project backend to scikit-build-core, using the installed `pgo-configure` entry point can force a package build before Conan has generated the CMake toolchain.
 - Dynamic build choices can be passed with `uv pip install . -Ccmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON` or with `SKBUILD_CMAKE_DEFINE`.
 
 - [ ] **Step 2: Add initial Python package files**
@@ -1808,10 +1810,10 @@ Add:
 ## Build Default Wheel
 
 ```bash
-python scripts/pgo_configure.py pypgo-release
+python scripts/pgo_configure.py pypgo-release-all
 uv build --wheel \
   -Ccmake.build-type=Release \
-  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release/conan_toolchain.cmake
+  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release-all/conan_toolchain.cmake
 uv pip install dist/pgo-*.whl
 uv run python -c "import pgo; print(pgo.World)"
 ```
@@ -1827,20 +1829,20 @@ Add:
 macOS:
 
 ```bash
-python scripts/pgo_configure.py pypgo-release-accel
+python scripts/pgo_configure.py pypgo-release-accel-all
 uv build --wheel \
   -Ccmake.build-type=Release \
-  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release-accel/conan_toolchain.cmake \
+  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release-accel-all/conan_toolchain.cmake \
   -Ccmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON
 ```
 
 Linux/Windows with MKL:
 
 ```bash
-python scripts/pgo_configure.py pypgo-release-accel
+python scripts/pgo_configure.py pypgo-release-accel-all
 uv build --wheel \
   -Ccmake.build-type=Release \
-  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release-accel/conan_toolchain.cmake \
+  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release-accel-all/conan_toolchain.cmake \
   -Ccmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON \
   -Ccmake.define.PGO_EIGEN_ACCELERATION_BACKEND=MKL
 ```
@@ -1848,12 +1850,12 @@ uv build --wheel \
 Stable-ABI release wheels use Python 3.12+ and an explicit wheel tag setting:
 
 ```bash
-python scripts/pgo_configure.py pypgo-release
+python scripts/pgo_configure.py pypgo-release-all
 uv build --wheel \
   -Cwheel.py-api=cp312 \
   -Ccmake.build-type=Release \
   -Ccmake.define.PGO_ENABLE_PYTHON_STABLE_ABI=ON \
-  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release/conan_toolchain.cmake
+  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release-all/conan_toolchain.cmake
 ```
 
 If both default and accelerated wheels are published, use separate distribution names:
@@ -2093,11 +2095,11 @@ Expected: configure fails if MKL is unavailable; otherwise Python tests pass.
 - [ ] **Step 5: Run default release wheel smoke through the Python package preset**
 
 ```bash
-python scripts/pgo_configure.py pypgo-release
-uv build --wheel --out-dir dist/pypgo-release --clear \
+python scripts/pgo_configure.py pypgo-release-all
+uv build --wheel --out-dir dist/pypgo-release-all --clear \
   -Ccmake.build-type=Release \
-  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release/conan_toolchain.cmake
-uv pip install --force-reinstall dist/pypgo-release/pgo-*.whl
+  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release-all/conan_toolchain.cmake
+uv pip install --force-reinstall dist/pypgo-release-all/pgo-*.whl
 uv run python -c "import pgo; print(pgo.World)"
 uv run pytest tests/python -q
 ```
@@ -2109,25 +2111,25 @@ Expected: the default release wheel imports and Python tests pass.
 macOS:
 
 ```bash
-python scripts/pgo_configure.py pypgo-release-accel
-uv build --wheel --out-dir dist/pypgo-release-accel --clear \
+python scripts/pgo_configure.py pypgo-release-accel-all
+uv build --wheel --out-dir dist/pypgo-release-accel-all --clear \
   -Ccmake.build-type=Release \
-  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release-accel/conan_toolchain.cmake \
+  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release-accel-all/conan_toolchain.cmake \
   -Ccmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON
-uv pip install --force-reinstall dist/pypgo-release-accel/pgo-*.whl
+uv pip install --force-reinstall dist/pypgo-release-accel-all/pgo-*.whl
 uv run pytest tests/python -q
 ```
 
 Linux/Windows with MKL:
 
 ```bash
-python scripts/pgo_configure.py pypgo-release-accel
-uv build --wheel --out-dir dist/pypgo-release-accel --clear \
+python scripts/pgo_configure.py pypgo-release-accel-all
+uv build --wheel --out-dir dist/pypgo-release-accel-all --clear \
   -Ccmake.build-type=Release \
-  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release-accel/conan_toolchain.cmake \
+  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release-accel-all/conan_toolchain.cmake \
   -Ccmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON \
   -Ccmake.define.PGO_EIGEN_ACCELERATION_BACKEND=MKL
-uv pip install --force-reinstall dist/pypgo-release-accel/pgo-*.whl
+uv pip install --force-reinstall dist/pypgo-release-accel-all/pgo-*.whl
 uv run pytest tests/python -q
 ```
 
@@ -2193,10 +2195,10 @@ Expected: `_pgo_ext` can locate `pgo_c` from the installed package directory.
 - C API tests create/destroy a world, query vertex count, copy positions, and run one step.
 - Every exported C function that calls C++ code catches exceptions and returns `pgo_status_t`.
 - Python package builds through scikit-build-core and nanobind.
-- `CMakePresets.json` provides `pypgo-release` and `pypgo-release-accel` presets that configure only the Python package runtime surface.
+- `CMakePresets.json` provides `pypgo-release-all` and `pypgo-release-accel-all` presets that configure only the Python package runtime surface.
 - `python scripts/pgo_configure.py debug` followed by `uv pip install -e . --no-build-isolation -Ccmake.build-type=Debug -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/debug/conan_toolchain.cmake` installs an importable `pgo` package.
-- `python scripts/pgo_configure.py pypgo-release` followed by `uv build --wheel -Ccmake.build-type=Release -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release/conan_toolchain.cmake` builds the default release wheel.
-- `python scripts/pgo_configure.py pypgo-release-accel` followed by `uv build --wheel -Ccmake.build-type=Release -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release-accel/conan_toolchain.cmake -Ccmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON` builds the accelerated release wheel on supported machines.
+- `python scripts/pgo_configure.py pypgo-release-all` followed by `uv build --wheel -Ccmake.build-type=Release -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release-all/conan_toolchain.cmake` builds the default release wheel.
+- `python scripts/pgo_configure.py pypgo-release-accel-all` followed by `uv build --wheel -Ccmake.build-type=Release -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release-accel-all/conan_toolchain.cmake -Ccmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON` builds the accelerated release wheel on supported machines.
 - Python tests pass with the default package.
 - Accelerated macOS package works with Apple Accelerate.
 - Accelerated Linux/Windows package requires MKL and fails clearly when MKL is unavailable.
@@ -2206,7 +2208,7 @@ Expected: `_pgo_ext` can locate `pgo_c` from the installed package directory.
 ## Recommended Implementation Order
 
 1. Confirm the current Milestone 1 core/io/example pipeline is green. Do not block this plan on a broad example refactor; the first C API implementation may own the private `MassSpringWorld3d` bridge, and any later reusable-helper extraction must preserve the C ABI tests.
-2. Implement Phase 1 build/package options and the `pypgo-release` / `pypgo-release-accel` presets.
+2. Implement Phase 1 build/package options and the `pypgo-release-all` / `pypgo-release-accel-all` presets.
 3. Implement Phase 2 public C header and hygiene checks.
 4. Implement Phase 3 `pgo_c` shared library and C tests.
 5. Verify C step/write logic against the example simulation pipeline.
@@ -2217,7 +2219,7 @@ Expected: `_pgo_ext` can locate `pgo_c` from the installed package directory.
 
 ## Self-Review
 
-- Spec coverage: C99 API split out from Milestone 1, nanobind Python API merged into this plan, dedicated `pypgo-release` / `pypgo-release-accel` presets included, uv install/build commands included, acceleration/MKL package policy included, symbol visibility/export-map policy included.
+- Spec coverage: C99 API split out from Milestone 1, nanobind Python API merged into this plan, dedicated `pypgo-release-all` / `pypgo-release-accel-all` presets included, uv install/build commands included, acceleration/MKL package policy included, symbol visibility/export-map policy included.
 - Placeholder scan: The plan avoids open-ended placeholders; code steps define the C ABI, internal mass-spring world, nanobind bridge, tests, and verification commands directly.
 - Type consistency: Public C names use `pgo_world_t`, `pgo_mesh_view_t`, `pgo_mass_spring_params_t`, `pgo_step_result_t`, and `pgo_error_t` consistently. Python wrapper uses `World` and `StepResult` consistently.
 - Scope control: The plan does not expose C++ template energies, Eigen objects, collision/contact, IPC, FEM, or GPU backend APIs.

@@ -55,3 +55,7 @@ if(PGO_ENABLE_SPDLOG)
 
     gtest_discover_tests(pgo_spdlog_tests)
 endif()
+
+if(PGO_BUILD_C_API AND TARGET pgo_c)
+    add_subdirectory(c_api)
+endif()

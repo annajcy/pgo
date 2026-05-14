@@ -150,7 +150,7 @@ def create_plan(
                     f"preset '{preset_name}' has {cmake_var}={cmake_value}, "
                     f"but expected one of {list(value_map.keys())}"
                 )
-            conan_command.extend(["-o:h", f"{conan_option}={conan_value}"])
+            conan_command.extend(["-o:h", f"&:{conan_option}={conan_value}"])
 
     cmake_command = ["cmake", "--preset", preset_name]
     cmake_build_command = ["cmake", "--build", "--preset", preset_name]

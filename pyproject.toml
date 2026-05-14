@@ -3,17 +3,43 @@ name = "pgo"
 version = "0.1.0"
 description = "GPU-aware C++23 physics simulation"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "numpy>=1.24",
+]
 
 [project.scripts]
 pgo-configure = "scripts.pgo_configure:main_cli"
 
-[tool.uv]
-package = true
+[dependency-groups]
+dev = [
+    "nanobind>=2.0",
+    "pytest>=8.0",
+    "scikit-build-core>=0.10",
+]
 
-[tool.hatch.build.targets.wheel]
-packages = ["scripts"]
+[tool.uv]
+package = false
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = [
+    "scikit-build-core>=0.10",
+    "nanobind>=2.0",
+    "numpy>=1.24",
+]
+build-backend = "scikit_build_core.build"
+
+[tool.scikit-build]
+minimum-version = "build-system.requires"
+build-dir = "build/python/{wheel_tag}"
+wheel.packages = ["python/pgo", "scripts"]
+install.components = ["python"]
+
+[tool.scikit-build.cmake.define]
+PGO_BUILD_TESTS = false
+PGO_BUILD_EXAMPLES = false
+PGO_BUILD_TOOLS = false
+PGO_BUILD_BENCHMARKS = false
+PGO_BUILD_C_API = true
+PGO_BUILD_PYTHON = true
+PGO_ENABLE_NATIVE_ARCH = false
+PGO_ENABLE_PYTHON_STABLE_ABI = false

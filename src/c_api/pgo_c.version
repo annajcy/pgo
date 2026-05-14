@@ -1,0 +1,6 @@
+PGO_C_0.1 {
+    global:
+        pgo_*;
+    local:
+        *;
+};

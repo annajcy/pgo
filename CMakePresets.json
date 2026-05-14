@@ -52,6 +52,21 @@
         "PGO_ENABLE_SANITIZERS": "ON"
       }
     },
+    {
+      "name": "pypgo",
+      "hidden": true,
+      "generator": "Ninja",
+      "cacheVariables": {
+        "PGO_BUILD_TESTS": "OFF",
+        "PGO_BUILD_EXAMPLES": "OFF",
+        "PGO_BUILD_TOOLS": "OFF",
+        "PGO_BUILD_BENCHMARKS": "OFF",
+        "PGO_BUILD_C_API": "ON",
+        "PGO_BUILD_PYTHON": "ON",
+        "PGO_ENABLE_NATIVE_ARCH": "OFF",
+        "PGO_ENABLE_PYTHON_STABLE_ABI": "OFF"
+      }
+    },
 
     {
       "name": "debug",
@@ -163,6 +178,24 @@
       }
     },
     {
+      "name": "pypgo-release-all",
+      "displayName": "Python Package Release + All",
+      "inherits": ["rel", "all-opt", "pypgo"],
+      "binaryDir": "${sourceDir}/build/pypgo-release-all",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/pypgo-release-all/conan_toolchain.cmake"
+      }
+    },
+    {
+      "name": "pypgo-release-accel-all",
+      "displayName": "Python Package Release + Accel + All",
+      "inherits": ["rel", "accel", "all-opt", "pypgo"],
+      "binaryDir": "${sourceDir}/build/pypgo-release-accel-all",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/pypgo-release-accel-all/conan_toolchain.cmake"
+      }
+    },
+    {
       "name": "release-asan",
       "displayName": "Release + ASan",
       "inherits": ["base", "rel", "san"],
@@ -212,6 +245,8 @@
     { "name": "release-accel",       "configurePreset": "release-accel" },
     { "name": "release-all",         "configurePreset": "release-all" },
     { "name": "release-accel-all",   "configurePreset": "release-accel-all" },
+    { "name": "pypgo-release-all",   "configurePreset": "pypgo-release-all" },
+    { "name": "pypgo-release-accel-all","configurePreset": "pypgo-release-accel-all" },
     { "name": "release-asan",        "configurePreset": "release-asan" },
     { "name": "release-accel-asan",  "configurePreset": "release-accel-asan" },
     { "name": "release-all-asan",    "configurePreset": "release-all-asan" },

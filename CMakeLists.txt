@@ -40,6 +40,13 @@ if(PGO_BUILD_C_API AND EXISTS "${PROJECT_SOURCE_DIR}/src/c_api/CMakeLists.txt")
     add_subdirectory(src/c_api)
 endif()
 
+if(PGO_BUILD_PYTHON AND EXISTS "${PROJECT_SOURCE_DIR}/src/python/CMakeLists.txt")
+    if(NOT PGO_BUILD_C_API)
+        message(FATAL_ERROR "PGO_BUILD_PYTHON=ON requires PGO_BUILD_C_API=ON")
+    endif()
+    add_subdirectory(src/python)
+endif()
+
 if(PGO_BUILD_EXAMPLES AND EXISTS "${PROJECT_SOURCE_DIR}/examples/CMakeLists.txt")
     add_subdirectory(examples)
 endif()
