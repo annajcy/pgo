@@ -19,8 +19,12 @@
 - C strings are UTF-8 byte strings by convention. The C API accepts `const char*` paths and returns structured errors for invalid encoding/path failures.
 - Input arrays passed through descriptors are borrowed only for the call duration. `pgo_c` copies mesh/topology/state into its own C++ objects during create calls.
 - Output arrays are caller-owned. The C API validates output length before writing.
+- Mesh triangles are the render topology and the spring graph source for this Milestone 1 API. `pgo_c` validates triangle indices, rejects degenerate triangles, and deduplicates undirected triangle edges into springs to match the current OBJ reader/example behavior.
+- Solver controls are API-level inputs, not bridge-local constants. `pgo_world_step` accepts optional C solver options so Python and C users can choose convergence tolerances and `commit_on_failure` without recompiling.
 - Python arrays use `numpy.float64` and `numpy.uint64`/`numpy.int64` views at the boundary, then call the C API with raw pointers.
-- Python API should be coarse-grained: create world, step, copy positions, write OBJ. Do not wrap every C++ energy/model/template type.
+- Python API should be coarse-grained: create world, step, copy positions, write OBJ frames. Do not wrap every C++ energy/model/template type.
+- Python wheel builds disable `PGO_ENABLE_NATIVE_ARCH` by default. Native CPU tuning is fine for local CMake builds, but release wheels must not embed the build machine's CPU feature set.
+- Stable-ABI Python wheels are a release variant, not the default local editable mode. Build them from Python 3.12+ with nanobind `STABLE_ABI` and scikit-build-core `wheel.py-api=cp312`; normal editable installs stay version-specific and support Python 3.10+.
 - Distribution variants:
   - `release-all`: default package, no Eigen acceleration on Linux/Windows, imports as `pgo`.
   - `release-accel-all`: accelerated package, imports as `pgo`; macOS uses Accelerate, Linux/Windows require MKL.
@@ -95,7 +99,7 @@ Add these options to `cmake/pgo_options.cmake`:
 ```cmake
 option(PGO_BUILD_C_API "Build the C99 shared-library API" ON)
 option(PGO_BUILD_PYTHON "Build the nanobind Python extension" OFF)
-option(PGO_ENABLE_PYTHON_STABLE_ABI "Build Python extension with Python stable ABI when supported" ON)
+option(PGO_ENABLE_PYTHON_STABLE_ABI "Build Python extension with Python stable ABI when supported" OFF)
 set(PGO_PYTHON_EXTENSION_NAME "_pgo_ext" CACHE STRING "Name of the private Python extension module")
 set_property(CACHE PGO_PYTHON_EXTENSION_NAME PROPERTY STRINGS "_pgo_ext")
 ```
@@ -111,7 +115,7 @@ if(PGO_BUILD_C_API AND EXISTS "${PROJECT_SOURCE_DIR}/src/c_api/CMakeLists.txt")
     add_subdirectory(src/c_api)
 endif()
 
-if(PGO_BUILD_PYTHON)
+if(PGO_BUILD_PYTHON AND EXISTS "${PROJECT_SOURCE_DIR}/src/python/CMakeLists.txt")
     if(NOT PGO_BUILD_C_API)
         message(FATAL_ERROR "PGO_BUILD_PYTHON=ON requires PGO_BUILD_C_API=ON")
     endif()
@@ -124,16 +128,101 @@ endif()
 Run:
 
 ```bash
-cmake --preset debug
+python scripts/pgo_configure.py debug
 cmake --build --preset debug --target help
 ```
 
 Expected:
 
-- Configure succeeds when `src/c_api` does not exist yet.
-- No Python target is built unless `PGO_BUILD_PYTHON=ON`.
+- Configure succeeds when `src/c_api` or `src/python` does not exist yet, which keeps early plan phases installable.
+- No Python target is built unless `PGO_BUILD_PYTHON=ON` and `src/python/CMakeLists.txt` exists.
 
-### Task 1.2: Move Python Packaging To scikit-build-core
+### Task 1.2: Add Python Package Build Presets
+
+**Files:**
+- Modify: `CMakePresets.json`
+
+- [ ] **Step 1: Add a hidden Python package preset base**
+
+Add this hidden configure preset near the existing hidden `base`/`rel`/`accel` presets:
+
+```json
+{
+  "name": "pypgo",
+  "hidden": true,
+  "cacheVariables": {
+    "PGO_BUILD_TESTS": "OFF",
+    "PGO_BUILD_EXAMPLES": "OFF",
+    "PGO_BUILD_TOOLS": "OFF",
+    "PGO_BUILD_BENCHMARKS": "OFF",
+    "PGO_BUILD_C_API": "ON",
+    "PGO_BUILD_PYTHON": "ON",
+    "PGO_ENABLE_NATIVE_ARCH": "OFF",
+    "PGO_ENABLE_PYTHON_STABLE_ABI": "OFF"
+  }
+}
+```
+
+Why this exists:
+
+- Python package builds should not inherit the normal developer preset behavior of building tests/examples/tools/benchmarks.
+- `PGO_ENABLE_NATIVE_ARCH=OFF` keeps wheels portable across machines instead of tuning for the build host CPU.
+- `PGO_ENABLE_PYTHON_STABLE_ABI=OFF` keeps normal wheels version-specific; stable-ABI wheels are built by explicitly overriding this option at release time.
+
+- [ ] **Step 2: Add normal and accelerated Python package configure presets**
+
+Add these visible configure presets after the existing release presets:
+
+```json
+{
+  "name": "pypgo-release",
+  "displayName": "Python Package Release",
+  "inherits": ["base", "rel", "pypgo"],
+  "binaryDir": "${sourceDir}/build/pypgo-release",
+  "cacheVariables": {
+    "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/pypgo-release/conan_toolchain.cmake"
+  }
+},
+{
+  "name": "pypgo-release-accel",
+  "displayName": "Python Package Release + Accel",
+  "inherits": ["base", "rel", "accel", "pypgo"],
+  "binaryDir": "${sourceDir}/build/pypgo-release-accel",
+  "cacheVariables": {
+    "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan/pypgo-release-accel/conan_toolchain.cmake"
+  }
+}
+```
+
+Ordering matters: `pypgo` must be the last parent so it overrides `base` and turns off tests/examples/tools/benchmarks.
+
+- [ ] **Step 3: Add matching build presets**
+
+Add these entries to `buildPresets`:
+
+```json
+{ "name": "pypgo-release", "configurePreset": "pypgo-release" },
+{ "name": "pypgo-release-accel", "configurePreset": "pypgo-release-accel" }
+```
+
+Do not add `testPresets` for `pypgo-*`; these presets intentionally build only the Python package runtime surface, so package verification lives in `uv run pytest tests/python -q`.
+
+- [ ] **Step 4: Verify preset planning**
+
+Run:
+
+```bash
+python scripts/pgo_configure.py pypgo-release --dry-run
+python scripts/pgo_configure.py pypgo-release-accel --dry-run
+```
+
+Expected:
+
+- `pypgo-release` uses `build/conan/pypgo-release/conan_toolchain.cmake`.
+- `pypgo-release-accel` uses `build/conan/pypgo-release-accel/conan_toolchain.cmake`.
+- `pypgo-release-accel` carries `PGO_ENABLE_EIGEN_ACCELERATION=ON` through the CMake preset.
+
+### Task 1.3: Move Python Packaging To scikit-build-core
 
 **Files:**
 - Modify: `pyproject.toml`
@@ -173,16 +262,26 @@ build-backend = "scikit_build_core.build"
 minimum-version = "build-system.requires"
 build-dir = "build/python/{wheel_tag}"
 wheel.packages = ["python/pgo", "scripts"]
+install.components = ["python"]
 
 [tool.scikit-build.cmake.define]
+PGO_BUILD_TESTS = false
+PGO_BUILD_EXAMPLES = false
+PGO_BUILD_TOOLS = false
+PGO_BUILD_BENCHMARKS = false
 PGO_BUILD_C_API = true
 PGO_BUILD_PYTHON = true
+PGO_ENABLE_NATIVE_ARCH = false
+PGO_ENABLE_PYTHON_STABLE_ABI = false
 ```
 
 Notes:
 
 - scikit-build-core automatically looks for packages under `python/<package>`.
-- Dynamic build choices can be passed with `uv pip install . --config-settings=cmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON` or with `SKBUILD_CMAKE_DEFINE`.
+- `install.components = ["python"]` keeps the wheel from accidentally installing the C SDK headers/dev archive component.
+- Wheel builds disable tests/examples/tools/benchmarks so build isolation does not need GTest, CLI11, benchmark, or example-only targets.
+- Packaging docs call `python scripts/pgo_configure.py pypgo-release...` directly before release `uv build`. After switching the project backend to scikit-build-core, using the installed `pgo-configure` entry point can force a package build before Conan has generated the CMake toolchain.
+- Dynamic build choices can be passed with `uv pip install . -Ccmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON` or with `SKBUILD_CMAKE_DEFINE`.
 
 - [ ] **Step 2: Add initial Python package files**
 
@@ -254,8 +353,13 @@ class World:
         stiffness: float = 100.0,
         gravity: float = 9.8,
         dt: float = 0.016,
+        pinned_vertices: np.ndarray | None = None,
     ) -> "World":
-        return cls(_pgo_ext.create_world_from_obj(path, float(stiffness), float(gravity), float(dt)))
+        if pinned_vertices is None:
+            pinned64 = np.empty((0,), dtype=np.uint64)
+        else:
+            pinned64 = np.ascontiguousarray(pinned_vertices, dtype=np.uint64)
+        return cls(_pgo_ext.create_world_from_obj(path, pinned64, float(stiffness), float(gravity), float(dt)))
 
     @property
     def vertex_count(self) -> int:
@@ -266,8 +370,21 @@ class World:
         _pgo_ext.copy_positions(self._handle, out)
         return out
 
-    def step(self) -> StepResult:
-        status, iterations, final_value, final_gradient_norm = _pgo_ext.step(self._handle)
+    def step(
+        self,
+        *,
+        max_iterations: int = 100,
+        gradient_tolerance: float = 1e-5,
+        initial_regularization: float = 1e-4,
+        commit_on_failure: bool = False,
+    ) -> StepResult:
+        status, iterations, final_value, final_gradient_norm = _pgo_ext.step(
+            self._handle,
+            int(max_iterations),
+            float(gradient_tolerance),
+            float(initial_regularization),
+            bool(commit_on_failure),
+        )
         return StepResult(
             status=str(status),
             iterations=int(iterations),
@@ -275,8 +392,8 @@ class World:
             final_gradient_norm=float(final_gradient_norm),
         )
 
-    def write_obj(self, path: str) -> None:
-        _pgo_ext.write_obj(self._handle, path)
+    def write_obj_frame(self, output_dir: str) -> None:
+        _pgo_ext.write_obj_frame(self._handle, output_dir)
 ```
 
 `python/pgo/py.typed` is an empty marker file.
@@ -286,7 +403,7 @@ class World:
 Run after file creation and before extension build:
 
 ```bash
-uv run python -c "import pgo"
+PYTHONPATH=python uv run --no-sync python -c "import pgo"
 ```
 
 Expected while `_pgo_ext` is not implemented yet:
@@ -296,6 +413,7 @@ ImportError: cannot import name '_pgo_ext'
 ```
 
 That failure is acceptable at this step; Task 4 turns it into a passing import.
+Use `PYTHONPATH=python` here so the check exercises the source package without triggering a scikit-build-core CMake build before the C/Python targets exist.
 
 ## Phase 2: Public C99 ABI
 
@@ -389,6 +507,13 @@ typedef struct pgo_mass_spring_params_t {
     double dt;
 } pgo_mass_spring_params_t;
 
+typedef struct pgo_solver_options_t {
+    uint64_t max_iterations;
+    double gradient_tolerance;
+    double initial_regularization;
+    int commit_on_failure;
+} pgo_solver_options_t;
+
 typedef struct pgo_step_result_t {
     pgo_solver_status_t solver_status;
     uint64_t iterations;
@@ -400,6 +525,10 @@ PGO_C_API const char* pgo_version(void);
 
 PGO_C_API void pgo_error_clear(pgo_error_t* error);
 
+PGO_C_API void pgo_mass_spring_params_default(pgo_mass_spring_params_t* params);
+
+PGO_C_API void pgo_solver_options_default(pgo_solver_options_t* options);
+
 PGO_C_API pgo_status_t pgo_world_create_mass_spring(
     const pgo_mesh_view_t* mesh,
     const pgo_mass_spring_params_t* params,
@@ -409,6 +538,8 @@ PGO_C_API pgo_status_t pgo_world_create_mass_spring(
 PGO_C_API pgo_status_t pgo_world_create_mass_spring_from_obj(
     const char* path,
     const pgo_mass_spring_params_t* params,
+    const uint64_t* pinned_vertices,
+    uint64_t pinned_vertex_count,
     pgo_world_t** out_world,
     pgo_error_t* error);
 
@@ -427,6 +558,7 @@ PGO_C_API pgo_status_t pgo_world_copy_positions(
 
 PGO_C_API pgo_status_t pgo_world_step(
     pgo_world_t* world,
+    const pgo_solver_options_t* options,
     pgo_step_result_t* out_result,
     pgo_error_t* error);
 
@@ -444,8 +576,11 @@ Design constraints:
 
 - `positions_xyz` length is `vertex_count * 3`.
 - `triangles` length is `triangle_count * 3`.
+- Triangle indices must fit the current internal `pgo::geometry::VertexIndex` range and each triangle must reference three distinct vertices.
 - `pgo_world_create_mass_spring` copies all borrowed arrays before returning.
+- `pgo_world_create_mass_spring_from_obj` accepts optional pinned vertex indices after OBJ load; pass `NULL, 0` for no pinned vertices.
 - `pgo_world_copy_positions` requires `out_position_scalar_count >= vertex_count * 3`.
+- `pgo_world_step` uses default solver options when `options == NULL`.
 - `pgo_world_destroy(NULL)` is allowed and is a no-op.
 
 - [ ] **Step 2: Verify C-only header hygiene**
@@ -470,6 +605,7 @@ Expected:
 - Create: `src/c_api/CMakeLists.txt`
 - Create: `src/c_api/pgo_c.version`
 - Create: `src/c_api/pgo_c.symbols`
+- Modify: `src/io/CMakeLists.txt`
 
 - [ ] **Step 1: Create the shared-library target**
 
@@ -491,7 +627,6 @@ target_link_libraries(pgo_c
     PRIVATE
         pgo::core
         pgo::io
-        pgo::log
         pgo_project_warnings
         pgo_project_sanitizers
 )
@@ -527,7 +662,17 @@ install(DIRECTORY "${PROJECT_SOURCE_DIR}/include/pgo_c"
 
 For non-wheel C SDK packaging, add a separate install component that installs `pgo_c` to `${CMAKE_INSTALL_LIBDIR}`. The Python wheel component deliberately places the runtime library next to `_pgo_ext`.
 
-- [ ] **Step 2: Add Linux version script**
+- [ ] **Step 2: Make the static IO target usable from the shared C ABI**
+
+In `src/io/CMakeLists.txt`, add PIC to `pgo_io` because `pgo_c` links the existing static IO target into a shared library:
+
+```cmake
+set_target_properties(pgo_io PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+)
+```
+
+- [ ] **Step 3: Add Linux version script**
 
 `src/c_api/pgo_c.version`:
 
@@ -540,13 +685,15 @@ PGO_C_0.1 {
 };
 ```
 
-- [ ] **Step 3: Add macOS exported symbols list**
+- [ ] **Step 4: Add macOS exported symbols list**
 
 `src/c_api/pgo_c.symbols`:
 
 ```text
 _pgo_version
 _pgo_error_clear
+_pgo_mass_spring_params_default
+_pgo_solver_options_default
 _pgo_world_create_mass_spring
 _pgo_world_create_mass_spring_from_obj
 _pgo_world_destroy
@@ -568,25 +715,26 @@ Start `src/c_api/pgo_c.cpp` with:
 ```cpp
 #include "pgo_c/pgo.h"
 
-#include "pgo/dof/dirichlet_boundary.hpp"
-#include "pgo/dof/dof_layout.hpp"
-#include "pgo/dof/reduced_dof_map.hpp"
-#include "pgo/energy/assembled_energy.hpp"
-#include "pgo/energy/constant_force_energy.hpp"
-#include "pgo/energy/energy_sum.hpp"
-#include "pgo/energy/mass_spring_local_energy_provider.hpp"
-#include "pgo/geometry/rest_mesh.hpp"
-#include "pgo/integrator/backward_euler.hpp"
-#include "pgo/integrator/dynamic_state.hpp"
+#include "pgo/core/dof/dirichlet_boundary.hpp"
+#include "pgo/core/dof/dof_layout.hpp"
+#include "pgo/core/dof/reduced_dof_map.hpp"
+#include "pgo/core/energy/assembled_energy.hpp"
+#include "pgo/core/energy/constant_force_energy.hpp"
+#include "pgo/core/energy/energy_sum.hpp"
+#include "pgo/core/energy/mass_spring_local_energy_provider.hpp"
+#include "pgo/core/geometry/rest_mesh.hpp"
+#include "pgo/core/integrator/backward_euler.hpp"
+#include "pgo/core/integrator/dynamic_state.hpp"
+#include "pgo/core/solver/status_name.hpp"
+#include "pgo/core/storage/host_buffer.hpp"
 #include "pgo/io/obj_reader.hpp"
 #include "pgo/io/obj_writer.hpp"
-#include "pgo/log/registry.hpp"
-#include "pgo/solver/status_name.hpp"
-#include "pgo/storage/host_buffer.hpp"
 
 #include <algorithm>
+#include <cstdint>
 #include <exception>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <new>
 #include <set>
@@ -597,6 +745,11 @@ Start `src/c_api/pgo_c.cpp` with:
 #include <vector>
 
 namespace {
+
+class IoError : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
 
 void set_error(pgo_error_t* error, pgo_status_t status, std::string_view message) noexcept {
     if (error == nullptr) {
@@ -621,6 +774,12 @@ pgo_status_t call_c_api(pgo_error_t* error, F&& f) noexcept {
     } catch (const std::invalid_argument& e) {
         set_error(error, PGO_STATUS_INVALID_ARGUMENT, e.what());
         return PGO_STATUS_INVALID_ARGUMENT;
+    } catch (const IoError& e) {
+        set_error(error, PGO_STATUS_IO_ERROR, e.what());
+        return PGO_STATUS_IO_ERROR;
+    } catch (const std::filesystem::filesystem_error& e) {
+        set_error(error, PGO_STATUS_IO_ERROR, e.what());
+        return PGO_STATUS_IO_ERROR;
     } catch (const std::runtime_error& e) {
         set_error(error, PGO_STATUS_INTERNAL_ERROR, e.what());
         return PGO_STATUS_INTERNAL_ERROR;
@@ -633,6 +792,14 @@ pgo_status_t call_c_api(pgo_error_t* error, F&& f) noexcept {
     }
 }
 
+pgo_mass_spring_params_t default_mass_spring_params() {
+    return pgo_mass_spring_params_t{100.0, 9.8, 0.016};
+}
+
+pgo_solver_options_t default_solver_options() {
+    return pgo_solver_options_t{100, 1e-5, 1e-4, 0};
+}
+
 void validate_params(const pgo_mass_spring_params_t& params) {
     if (!(params.stiffness > 0.0)) {
         throw std::invalid_argument{"stiffness must be positive"};
@@ -643,6 +810,26 @@ void validate_params(const pgo_mass_spring_params_t& params) {
     if (!(params.gravity >= 0.0)) {
         throw std::invalid_argument{"gravity must be non-negative"};
     }
+}
+
+void validate_solver_options(const pgo_solver_options_t& options) {
+    if (options.max_iterations == 0) {
+        throw std::invalid_argument{"max_iterations must be positive"};
+    }
+    if (!(options.gradient_tolerance > 0.0)) {
+        throw std::invalid_argument{"gradient_tolerance must be positive"};
+    }
+    if (!(options.initial_regularization > 0.0)) {
+        throw std::invalid_argument{"initial_regularization must be positive"};
+    }
+}
+
+pgo::solver::NewtonOptions<double> to_newton_options(const pgo_solver_options_t& options) {
+    pgo::solver::NewtonOptions<double> newton_options;
+    newton_options.max_iterations = static_cast<std::size_t>(options.max_iterations);
+    newton_options.gradient_tolerance = options.gradient_tolerance;
+    newton_options.initial_regularization = options.initial_regularization;
+    return newton_options;
 }
 
 pgo_solver_status_t to_c_solver_status(const pgo::solver::SolverStatus status) {
@@ -659,12 +846,35 @@ pgo_solver_status_t to_c_solver_status(const pgo::solver::SolverStatus status) {
     return PGO_SOLVER_LINE_SEARCH_FAILED;
 }
 
-std::vector<std::size_t> pinned_vertices_from_view(const pgo_mesh_view_t& view) {
+std::size_t checked_arity_count(const std::uint64_t count, const std::uint64_t arity) {
+    constexpr auto max_size = static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max());
+    if (count > max_size / arity) {
+        throw std::invalid_argument{"input count is too large for this platform"};
+    }
+    return static_cast<std::size_t>(count * arity);
+}
+
+pgo::geometry::VertexIndex checked_vertex_index(const std::uint64_t vertex,
+                                                const std::uint64_t vertex_count) {
+    if (vertex >= vertex_count) {
+        throw std::invalid_argument{"triangle vertex index is out of range"};
+    }
+    if (vertex > std::numeric_limits<pgo::geometry::VertexIndex>::max()) {
+        throw std::invalid_argument{"triangle vertex index exceeds pgo VertexIndex range"};
+    }
+    return static_cast<pgo::geometry::VertexIndex>(vertex);
+}
+
+std::vector<std::size_t> pinned_vertices_from_array(
+    const std::uint64_t* pinned_vertices,
+    const std::uint64_t pinned_vertex_count,
+    const std::uint64_t vertex_count) {
+    const std::size_t pinned_count = checked_arity_count(pinned_vertex_count, 1);
     std::vector<std::size_t> pinned;
-    pinned.reserve(static_cast<std::size_t>(view.pinned_vertex_count));
-    for (std::uint64_t i = 0; i < view.pinned_vertex_count; ++i) {
-        const auto vertex = view.pinned_vertices[i];
-        if (vertex >= view.vertex_count) {
+    pinned.reserve(pinned_count);
+    for (std::uint64_t i = 0; i < pinned_vertex_count; ++i) {
+        const auto vertex = pinned_vertices[i];
+        if (vertex >= vertex_count) {
             throw std::invalid_argument{"pinned vertex index is out of range"};
         }
         pinned.push_back(static_cast<std::size_t>(vertex));
@@ -672,25 +882,32 @@ std::vector<std::size_t> pinned_vertices_from_view(const pgo_mesh_view_t& view) 
     return pinned;
 }
 
+std::vector<std::size_t> pinned_vertices_from_view(const pgo_mesh_view_t& view) {
+    return pinned_vertices_from_array(view.pinned_vertices, view.pinned_vertex_count, view.vertex_count);
+}
+
 pgo::geometry::RestMesh<double, 3> make_rest_mesh_from_view(const pgo_mesh_view_t& view) {
     using VertexIndex = pgo::geometry::VertexIndex;
 
+    if (view.vertex_count > std::numeric_limits<VertexIndex>::max()) {
+        throw std::invalid_argument{"vertex_count exceeds pgo VertexIndex range"};
+    }
+    const std::size_t position_scalars = checked_arity_count(view.vertex_count, 3);
+    const std::size_t triangle_scalars = checked_arity_count(view.triangle_count, 3);
+
     pgo::storage::HostBuffer<double> positions;
-    positions.reserve(static_cast<std::size_t>(view.vertex_count * 3));
-    for (std::uint64_t i = 0; i < view.vertex_count * 3; ++i) {
+    positions.reserve(position_scalars);
+    for (std::size_t i = 0; i < position_scalars; ++i) {
         positions.push_back(view.positions_xyz[i]);
     }
 
     pgo::storage::HostBuffer<VertexIndex> faces;
-    faces.reserve(static_cast<std::size_t>(view.triangle_count * 3));
+    faces.reserve(triangle_scalars);
 
     std::set<std::pair<VertexIndex, VertexIndex>> unique_edges;
     auto add_edge = [&](std::uint64_t a, std::uint64_t b) {
-        if (a >= view.vertex_count || b >= view.vertex_count) {
-            throw std::invalid_argument{"triangle vertex index is out of range"};
-        }
-        const auto va = static_cast<VertexIndex>(a);
-        const auto vb = static_cast<VertexIndex>(b);
+        const auto va = checked_vertex_index(a, view.vertex_count);
+        const auto vb = checked_vertex_index(b, view.vertex_count);
         unique_edges.insert(std::minmax(va, vb));
     };
 
@@ -698,12 +915,15 @@ pgo::geometry::RestMesh<double, 3> make_rest_mesh_from_view(const pgo_mesh_view_
         const std::uint64_t a = view.triangles[tri * 3 + 0];
         const std::uint64_t b = view.triangles[tri * 3 + 1];
         const std::uint64_t c = view.triangles[tri * 3 + 2];
+        if (a == b || b == c || c == a) {
+            throw std::invalid_argument{"triangle must reference three distinct vertices"};
+        }
         add_edge(a, b);
         add_edge(b, c);
         add_edge(c, a);
-        faces.push_back(static_cast<VertexIndex>(a));
-        faces.push_back(static_cast<VertexIndex>(b));
-        faces.push_back(static_cast<VertexIndex>(c));
+        faces.push_back(checked_vertex_index(a, view.vertex_count));
+        faces.push_back(checked_vertex_index(b, view.vertex_count));
+        faces.push_back(checked_vertex_index(c, view.vertex_count));
     }
 
     pgo::storage::HostBuffer<VertexIndex> edges;
@@ -759,9 +979,6 @@ public:
         m_state.u.setZero(pgo::math::dense_index(m_layout.num_dofs()));
         m_state.v.setZero(pgo::math::dense_index(m_layout.num_dofs()));
         m_state.a.setZero(pgo::math::dense_index(m_layout.num_dofs()));
-        m_newton_options.max_iterations = 100;
-        m_newton_options.gradient_tolerance = 1e-5;
-        m_newton_options.initial_regularization = 1e-4;
     }
 
     std::size_t vertex_count() const {
@@ -778,7 +995,9 @@ public:
         }
     }
 
-    pgo_step_result_t step() {
+    pgo_step_result_t step(const pgo_solver_options_t& options) {
+        validate_solver_options(options);
+        const auto newton_options = to_newton_options(options);
         const auto gravity_force = make_gravity_force(m_lumped_mass, m_gravity);
         const pgo::energy::ConstantForceEnergyView<double> gravity_energy{gravity_force};
         const pgo::energy::EnergySumView<double, Potential, decltype(gravity_energy)> step_energy{
@@ -790,8 +1009,8 @@ public:
             m_dof_map,
             m_state,
             m_dt,
-            m_newton_options,
-            false);
+            newton_options,
+            options.commit_on_failure != 0);
 
         return pgo_step_result_t{
             to_c_solver_status(result.status),
@@ -802,11 +1021,15 @@ public:
     }
 
     void write_obj_frame(const std::filesystem::path& output_dir) const {
-        if (!m_writer || m_writer_output_dir != output_dir) {
-            m_writer_output_dir = output_dir;
-            m_writer = std::make_unique<pgo::io::ObjWriter3d>(m_writer_output_dir);
+        try {
+            if (!m_writer || m_writer_output_dir != output_dir) {
+                m_writer_output_dir = output_dir;
+                m_writer = std::make_unique<pgo::io::ObjWriter3d>(m_writer_output_dir);
+            }
+            static_cast<void>(m_writer->write_frame(m_mesh, m_state.u));
+        } catch (const std::exception& e) {
+            throw IoError{e.what()};
         }
-        static_cast<void>(m_writer->write_frame(m_mesh, m_state.u));
     }
 
 private:
@@ -821,7 +1044,6 @@ private:
     double m_dt;
     pgo::integrator::BackwardEuler<double> m_integrator;
     pgo::integrator::DynamicState<double> m_state;
-    pgo::solver::NewtonOptions<double> m_newton_options;
     mutable std::filesystem::path m_writer_output_dir;
     mutable std::unique_ptr<pgo::io::ObjWriter3d> m_writer;
 };
@@ -850,6 +1072,20 @@ void pgo_error_clear(pgo_error_t* error) {
     }
     error->status = PGO_STATUS_OK;
     error->message[0] = '\0';
+}
+
+void pgo_mass_spring_params_default(pgo_mass_spring_params_t* params) {
+    if (params == nullptr) {
+        return;
+    }
+    *params = default_mass_spring_params();
+}
+
+void pgo_solver_options_default(pgo_solver_options_t* options) {
+    if (options == nullptr) {
+        return;
+    }
+    *options = default_solver_options();
 }
 
 } // extern "C"
@@ -906,19 +1142,33 @@ Append:
 pgo_status_t pgo_world_create_mass_spring_from_obj(
     const char* path,
     const pgo_mass_spring_params_t* params,
+    const std::uint64_t* pinned_vertices,
+    std::uint64_t pinned_vertex_count,
     pgo_world_t** out_world,
     pgo_error_t* error) {
     return call_c_api(error, [&]() -> pgo_status_t {
         if (path == nullptr || params == nullptr || out_world == nullptr) {
             throw std::invalid_argument{"path, params, and out_world must be non-null"};
         }
+        if (pinned_vertex_count > 0 && pinned_vertices == nullptr) {
+            throw std::invalid_argument{"pinned_vertices must be non-null when pinned_vertex_count is positive"};
+        }
         validate_params(*params);
 
         *out_world = nullptr;
+        pgo::geometry::RestMesh<double, 3> mesh = [&]() {
+            try {
+                return pgo::io::read_obj_rest_mesh_3d(std::filesystem::path{path});
+            } catch (const std::exception& e) {
+                throw IoError{e.what()};
+            }
+        }();
+        const auto vertex_count = static_cast<std::uint64_t>(mesh.num_vertices());
+
         auto world = std::make_unique<pgo_world_t>();
         world->impl = std::make_unique<MassSpringWorld3d>(
-            pgo::io::read_obj_rest_mesh_3d(std::filesystem::path{path}),
-            std::vector<std::size_t>{},
+            std::move(mesh),
+            pinned_vertices_from_array(pinned_vertices, pinned_vertex_count, vertex_count),
             *params);
 
         *out_world = world.release();
@@ -976,6 +1226,7 @@ Append:
 ```cpp
 pgo_status_t pgo_world_step(
     pgo_world_t* world,
+    const pgo_solver_options_t* options,
     pgo_step_result_t* out_result,
     pgo_error_t* error) {
     return call_c_api(error, [&]() -> pgo_status_t {
@@ -983,7 +1234,8 @@ pgo_status_t pgo_world_step(
             throw std::invalid_argument{"world and out_result must be non-null"};
         }
 
-        *out_result = world->impl->step();
+        const pgo_solver_options_t default_options = default_solver_options();
+        *out_result = world->impl->step(options == nullptr ? default_options : *options);
         return PGO_STATUS_OK;
     });
 }
@@ -994,6 +1246,7 @@ Acceptance rule:
 - The implementation uses `MassSpringLocalEnergyProvider`, `AssembledEnergyView`, `ConstantForceEnergyView`, `EnergySumView`, and `BackwardEuler`.
 - C function return value reports whether the C call itself succeeded.
 - Solver convergence is reported in `out_result->solver_status`; non-convergence does not become a C ABI transport error.
+- `commit_on_failure` is controlled by `pgo_solver_options_t`; the default is `false` to keep failed solves from mutating state unless the caller opts into animation-style best-effort stepping.
 
 - [ ] **Step 2: Implement `pgo_world_write_obj_frame`**
 
@@ -1037,6 +1290,7 @@ Acceptance rule:
 
 #include <assert.h>
 #include <stddef.h>
+#include <stdint.h>
 
 int main(void) {
     const double positions[] = {
@@ -1055,11 +1309,8 @@ int main(void) {
         pinned,
         1,
     };
-    const pgo_mass_spring_params_t params = {
-        100.0,
-        9.8,
-        0.016,
-    };
+    pgo_mass_spring_params_t params;
+    pgo_mass_spring_params_default(&params);
 
     pgo_error_t error;
     pgo_error_clear(&error);
@@ -1076,8 +1327,11 @@ int main(void) {
     assert(pgo_world_copy_positions(world, out_positions, 9, &error) == PGO_STATUS_OK);
     assert(out_positions[3] == 1.0);
 
+    pgo_solver_options_t solver_options;
+    pgo_solver_options_default(&solver_options);
+
     pgo_step_result_t step_result;
-    assert(pgo_world_step(world, &step_result, &error) == PGO_STATUS_OK);
+    assert(pgo_world_step(world, &solver_options, &step_result, &error) == PGO_STATUS_OK);
 
     pgo_world_destroy(world);
     pgo_world_destroy(NULL);
@@ -1150,6 +1404,10 @@ find_package(nanobind CONFIG REQUIRED)
 
 set(pgo_python_sources pgo_ext.cpp)
 
+if(PGO_ENABLE_PYTHON_STABLE_ABI AND NOT Python_Development.SABIModule_FOUND)
+    message(FATAL_ERROR "PGO_ENABLE_PYTHON_STABLE_ABI=ON requires Python Development.SABIModule; build stable-ABI wheels from Python 3.12+ and pass -Cwheel.py-api=cp312")
+endif()
+
 if(PGO_ENABLE_PYTHON_STABLE_ABI)
     nanobind_add_module(${PGO_PYTHON_EXTENSION_NAME}
         STABLE_ABI
@@ -1187,6 +1445,7 @@ install(TARGETS ${PGO_PYTHON_EXTENSION_NAME}
 Why this shape:
 
 - nanobind's `STABLE_ABI` reduces wheel matrix size on Python versions where it applies.
+- scikit-build-core still needs `wheel.py-api=cp312` for an abi3 wheel tag; the CMake option alone only changes the extension build.
 - nanobind defaults to size-oriented extension optimization in non-debug builds, while `pgo_c` and the C++ core keep project optimization flags.
 - `pgo_c` is installed next to the extension, so loader search can use `@loader_path`/`$ORIGIN`.
 
@@ -1282,6 +1541,7 @@ std::shared_ptr<WorldHandle> create_world_from_arrays(
 
 std::shared_ptr<WorldHandle> create_world_from_obj(
     const std::string& path,
+    UIntArray1 pinned_vertices,
     double stiffness,
     double gravity,
     double dt) {
@@ -1290,7 +1550,15 @@ std::shared_ptr<WorldHandle> create_world_from_obj(
     pgo_error_t error;
     pgo_error_clear(&error);
     pgo_world_t* raw = nullptr;
-    throw_on_error(pgo_world_create_mass_spring_from_obj(path.c_str(), &params, &raw, &error), error);
+    throw_on_error(
+        pgo_world_create_mass_spring_from_obj(
+            path.c_str(),
+            &params,
+            pinned_vertices.data(),
+            static_cast<std::uint64_t>(pinned_vertices.shape(0)),
+            &raw,
+            &error),
+        error);
     return std::make_shared<WorldHandle>(raw);
 }
 
@@ -1313,11 +1581,22 @@ void copy_positions(const std::shared_ptr<WorldHandle>& world, MutableFloatArray
         error);
 }
 
-nb::tuple step(const std::shared_ptr<WorldHandle>& world) {
+nb::tuple step(
+    const std::shared_ptr<WorldHandle>& world,
+    std::uint64_t max_iterations,
+    double gradient_tolerance,
+    double initial_regularization,
+    bool commit_on_failure) {
     pgo_error_t error;
     pgo_error_clear(&error);
+    const pgo_solver_options_t options{
+        max_iterations,
+        gradient_tolerance,
+        initial_regularization,
+        commit_on_failure ? 1 : 0,
+    };
     pgo_step_result_t result{};
-    throw_on_error(pgo_world_step(world->get(), &result, &error), error);
+    throw_on_error(pgo_world_step(world->get(), &options, &result, &error), error);
     const char* status = "line_search_failed";
     switch (result.solver_status) {
     case PGO_SOLVER_CONVERGED:
@@ -1340,10 +1619,10 @@ nb::tuple step(const std::shared_ptr<WorldHandle>& world) {
         result.final_gradient_norm);
 }
 
-void write_obj(const std::shared_ptr<WorldHandle>& world, const std::string& path) {
+void write_obj_frame(const std::shared_ptr<WorldHandle>& world, const std::string& output_dir) {
     pgo_error_t error;
     pgo_error_clear(&error);
-    throw_on_error(pgo_world_write_obj_frame(world->get(), path.c_str(), &error), error);
+    throw_on_error(pgo_world_write_obj_frame(world->get(), output_dir.c_str(), &error), error);
 }
 
 } // namespace
@@ -1357,7 +1636,7 @@ NB_MODULE(_pgo_ext, m) {
     m.def("vertex_count", &vertex_count);
     m.def("copy_positions", &copy_positions);
     m.def("step", &step);
-    m.def("write_obj", &write_obj);
+    m.def("write_obj_frame", &write_obj_frame);
 }
 ```
 
@@ -1428,14 +1707,20 @@ def test_step_returns_structured_result() -> None:
 Development install without build isolation:
 
 ```bash
-uv pip install -e . --no-build-isolation
+python scripts/pgo_configure.py debug
+uv pip install -e . --no-build-isolation \
+  -Ccmake.build-type=Debug \
+  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/debug/conan_toolchain.cmake
 ```
 
 If build dependencies are missing in the active environment:
 
 ```bash
 uv pip install scikit-build-core nanobind numpy pytest
-uv pip install -e . --no-build-isolation
+python scripts/pgo_configure.py debug
+uv pip install -e . --no-build-isolation \
+  -Ccmake.build-type=Debug \
+  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/debug/conan_toolchain.cmake
 ```
 
 Expected: `_pgo_ext` builds and installs inside the editable package.
@@ -1464,7 +1749,10 @@ Add:
 
 ```bash
 uv pip install scikit-build-core nanobind numpy pytest
-uv pip install -e . --no-build-isolation
+python scripts/pgo_configure.py debug
+uv pip install -e . --no-build-isolation \
+  -Ccmake.build-type=Debug \
+  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/debug/conan_toolchain.cmake
 uv run python -c "import pgo; print(pgo.World)"
 uv run pytest tests/python -q
 ```
@@ -1480,16 +1768,22 @@ Add:
 macOS uses Apple Accelerate through the existing Eigen acceleration option:
 
 ```bash
+python scripts/pgo_configure.py debug-accel
 uv pip install -e . --no-build-isolation \
-  --config-settings=cmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON
+  -Ccmake.build-type=Debug \
+  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/debug-accel/conan_toolchain.cmake \
+  -Ccmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON
 ```
 
 Linux and Windows require MKL for the accelerated variant:
 
 ```bash
+python scripts/pgo_configure.py debug-accel
 uv pip install -e . --no-build-isolation \
-  --config-settings=cmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON \
-  --config-settings=cmake.define.PGO_EIGEN_ACCELERATION_BACKEND=MKL
+  -Ccmake.build-type=Debug \
+  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/debug-accel/conan_toolchain.cmake \
+  -Ccmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON \
+  -Ccmake.define.PGO_EIGEN_ACCELERATION_BACKEND=MKL
 ```
 
 For simulation code that also uses TBB or application-level parallel loops, set BLAS thread counts explicitly:
@@ -1514,7 +1808,10 @@ Add:
 ## Build Default Wheel
 
 ```bash
-uv build --wheel
+python scripts/pgo_configure.py pypgo-release
+uv build --wheel \
+  -Ccmake.build-type=Release \
+  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release/conan_toolchain.cmake
 uv pip install dist/pgo-*.whl
 uv run python -c "import pgo; print(pgo.World)"
 ```
@@ -1530,16 +1827,33 @@ Add:
 macOS:
 
 ```bash
+python scripts/pgo_configure.py pypgo-release-accel
 uv build --wheel \
-  --config-setting=cmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON
+  -Ccmake.build-type=Release \
+  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release-accel/conan_toolchain.cmake \
+  -Ccmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON
 ```
 
 Linux/Windows with MKL:
 
 ```bash
+python scripts/pgo_configure.py pypgo-release-accel
 uv build --wheel \
-  --config-setting=cmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON \
-  --config-setting=cmake.define.PGO_EIGEN_ACCELERATION_BACKEND=MKL
+  -Ccmake.build-type=Release \
+  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release-accel/conan_toolchain.cmake \
+  -Ccmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON \
+  -Ccmake.define.PGO_EIGEN_ACCELERATION_BACKEND=MKL
+```
+
+Stable-ABI release wheels use Python 3.12+ and an explicit wheel tag setting:
+
+```bash
+python scripts/pgo_configure.py pypgo-release
+uv build --wheel \
+  -Cwheel.py-api=cp312 \
+  -Ccmake.build-type=Release \
+  -Ccmake.define.PGO_ENABLE_PYTHON_STABLE_ABI=ON \
+  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release/conan_toolchain.cmake
 ```
 
 If both default and accelerated wheels are published, use separate distribution names:
@@ -1629,6 +1943,9 @@ It does not expose STL, Eigen, C++ templates, C++ exceptions, namespaces, classe
 ```c
 #include "pgo_c/pgo.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 int main(void) {
     const double positions[] = {
         0.0, 0.0, 0.0,
@@ -1637,7 +1954,8 @@ int main(void) {
     };
     const uint64_t triangles[] = {0, 1, 2};
     const pgo_mesh_view_t mesh = {positions, 3, triangles, 1, NULL, 0};
-    const pgo_mass_spring_params_t params = {100.0, 9.8, 0.016};
+    pgo_mass_spring_params_t params;
+    pgo_mass_spring_params_default(&params);
 
     pgo_error_t error;
     pgo_error_clear(&error);
@@ -1648,7 +1966,7 @@ int main(void) {
     }
 
     pgo_step_result_t result;
-    pgo_world_step(world, &result, &error);
+    pgo_world_step(world, NULL, &result, &error);
     pgo_world_destroy(world);
     return 0;
 }
@@ -1725,7 +2043,7 @@ Add:
 - [ ] **Step 1: Run C++/C build and tests**
 
 ```bash
-cmake --preset debug
+python scripts/pgo_configure.py debug
 cmake --build --preset debug
 ctest --preset debug --output-on-failure
 ```
@@ -1736,7 +2054,10 @@ Expected: existing C++ tests and `pgo_c_api_tests` pass.
 
 ```bash
 uv pip install scikit-build-core nanobind numpy pytest
-uv pip install -e . --no-build-isolation
+python scripts/pgo_configure.py debug
+uv pip install -e . --no-build-isolation \
+  -Ccmake.build-type=Debug \
+  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/debug/conan_toolchain.cmake
 uv run pytest tests/python -q
 ```
 
@@ -1745,8 +2066,11 @@ Expected: Python tests pass and `import pgo` succeeds.
 - [ ] **Step 3: Run accelerated package smoke on macOS**
 
 ```bash
+python scripts/pgo_configure.py debug-accel
 uv pip install -e . --no-build-isolation \
-  --config-settings=cmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON
+  -Ccmake.build-type=Debug \
+  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/debug-accel/conan_toolchain.cmake \
+  -Ccmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON
 uv run pytest tests/python -q
 ```
 
@@ -1755,13 +2079,59 @@ Expected: Python tests pass with Apple Accelerate.
 - [ ] **Step 4: Run accelerated package smoke on Linux/Windows MKL machines**
 
 ```bash
+python scripts/pgo_configure.py debug-accel
 uv pip install -e . --no-build-isolation \
-  --config-settings=cmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON \
-  --config-settings=cmake.define.PGO_EIGEN_ACCELERATION_BACKEND=MKL
+  -Ccmake.build-type=Debug \
+  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/debug-accel/conan_toolchain.cmake \
+  -Ccmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON \
+  -Ccmake.define.PGO_EIGEN_ACCELERATION_BACKEND=MKL
 uv run pytest tests/python -q
 ```
 
 Expected: configure fails if MKL is unavailable; otherwise Python tests pass.
+
+- [ ] **Step 5: Run default release wheel smoke through the Python package preset**
+
+```bash
+python scripts/pgo_configure.py pypgo-release
+uv build --wheel --out-dir dist/pypgo-release --clear \
+  -Ccmake.build-type=Release \
+  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release/conan_toolchain.cmake
+uv pip install --force-reinstall dist/pypgo-release/pgo-*.whl
+uv run python -c "import pgo; print(pgo.World)"
+uv run pytest tests/python -q
+```
+
+Expected: the default release wheel imports and Python tests pass.
+
+- [ ] **Step 6: Run accelerated release wheel smoke on supported machines**
+
+macOS:
+
+```bash
+python scripts/pgo_configure.py pypgo-release-accel
+uv build --wheel --out-dir dist/pypgo-release-accel --clear \
+  -Ccmake.build-type=Release \
+  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release-accel/conan_toolchain.cmake \
+  -Ccmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON
+uv pip install --force-reinstall dist/pypgo-release-accel/pgo-*.whl
+uv run pytest tests/python -q
+```
+
+Linux/Windows with MKL:
+
+```bash
+python scripts/pgo_configure.py pypgo-release-accel
+uv build --wheel --out-dir dist/pypgo-release-accel --clear \
+  -Ccmake.build-type=Release \
+  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release-accel/conan_toolchain.cmake \
+  -Ccmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON \
+  -Ccmake.define.PGO_EIGEN_ACCELERATION_BACKEND=MKL
+uv pip install --force-reinstall dist/pypgo-release-accel/pgo-*.whl
+uv run pytest tests/python -q
+```
+
+Expected: macOS uses Accelerate; Linux/Windows require MKL and fail clearly if MKL is unavailable.
 
 ### Task 7.2: ABI Hygiene Checks
 
@@ -1823,7 +2193,10 @@ Expected: `_pgo_ext` can locate `pgo_c` from the installed package directory.
 - C API tests create/destroy a world, query vertex count, copy positions, and run one step.
 - Every exported C function that calls C++ code catches exceptions and returns `pgo_status_t`.
 - Python package builds through scikit-build-core and nanobind.
-- `uv pip install -e . --no-build-isolation` installs an importable `pgo` package.
+- `CMakePresets.json` provides `pypgo-release` and `pypgo-release-accel` presets that configure only the Python package runtime surface.
+- `python scripts/pgo_configure.py debug` followed by `uv pip install -e . --no-build-isolation -Ccmake.build-type=Debug -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/debug/conan_toolchain.cmake` installs an importable `pgo` package.
+- `python scripts/pgo_configure.py pypgo-release` followed by `uv build --wheel -Ccmake.build-type=Release -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release/conan_toolchain.cmake` builds the default release wheel.
+- `python scripts/pgo_configure.py pypgo-release-accel` followed by `uv build --wheel -Ccmake.build-type=Release -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release-accel/conan_toolchain.cmake -Ccmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON` builds the accelerated release wheel on supported machines.
 - Python tests pass with the default package.
 - Accelerated macOS package works with Apple Accelerate.
 - Accelerated Linux/Windows package requires MKL and fails clearly when MKL is unavailable.
@@ -1832,19 +2205,19 @@ Expected: `_pgo_ext` can locate `pgo_c` from the installed package directory.
 
 ## Recommended Implementation Order
 
-1. Finish Milestone 1 Phase 5 reusable mass-spring pipeline helpers.
-2. Implement Phase 1 build/package options.
+1. Confirm the current Milestone 1 core/io/example pipeline is green. Do not block this plan on a broad example refactor; the first C API implementation may own the private `MassSpringWorld3d` bridge, and any later reusable-helper extraction must preserve the C ABI tests.
+2. Implement Phase 1 build/package options and the `pypgo-release` / `pypgo-release-accel` presets.
 3. Implement Phase 2 public C header and hygiene checks.
 4. Implement Phase 3 `pgo_c` shared library and C tests.
 5. Verify C step/write logic against the example simulation pipeline.
 6. Implement Phase 4 nanobind extension.
 7. Implement Phase 5 package variant docs and local uv install commands.
 8. Implement Phase 6 docs.
-9. Run Phase 7 verification matrix.
+9. Run Phase 7 verification matrix, including both `pypgo-*` wheel smoke commands.
 
 ## Self-Review
 
-- Spec coverage: C99 API split out from Milestone 1, nanobind Python API merged into this plan, uv install/build commands included, acceleration/MKL package policy included, symbol visibility/export-map policy included.
+- Spec coverage: C99 API split out from Milestone 1, nanobind Python API merged into this plan, dedicated `pypgo-release` / `pypgo-release-accel` presets included, uv install/build commands included, acceleration/MKL package policy included, symbol visibility/export-map policy included.
 - Placeholder scan: The plan avoids open-ended placeholders; code steps define the C ABI, internal mass-spring world, nanobind bridge, tests, and verification commands directly.
 - Type consistency: Public C names use `pgo_world_t`, `pgo_mesh_view_t`, `pgo_mass_spring_params_t`, `pgo_step_result_t`, and `pgo_error_t` consistently. Python wrapper uses `World` and `StepResult` consistently.
 - Scope control: The plan does not expose C++ template energies, Eigen objects, collision/contact, IPC, FEM, or GPU backend APIs.

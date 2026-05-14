@@ -50,6 +50,32 @@ TEST(obj_reader, ReadsTriangularMeshAndExtractsUniqueEdges) {
     EXPECT_EQ(2, mesh.face_vertex(0, 2));
 }
 
+TEST(obj_reader, ThrowsOnDegenerateFace) {
+    const auto path = test_output_dir() / "degenerate.obj";
+    {
+        std::ofstream output{path};
+        output << "v 0 0 0\n";
+        output << "v 1 0 0\n";
+        output << "v 0 1 0\n";
+        output << "f 1 2 1\n"; // v1 appears twice — degenerate
+    }
+
+    EXPECT_THROW(std::ignore = pgo::io::read_obj_rest_mesh_3d(path), std::exception);
+}
+
+TEST(obj_reader, ThrowsOnOutOfRangeVertexIndex) {
+    const auto path = test_output_dir() / "oor.obj";
+    {
+        std::ofstream output{path};
+        output << "v 0 0 0\n";
+        output << "v 1 0 0\n";
+        output << "v 0 1 0\n";
+        output << "f 1 2 5\n"; // vertex 5 doesn't exist
+    }
+
+    EXPECT_THROW(std::ignore = pgo::io::read_obj_rest_mesh_3d(path), std::exception);
+}
+
 TEST(obj_writer3d, WritesDisplacedLineFrameWhenMeshHasNoFaces) {
     pgo::storage::HostBuffer<double> positions{0.0, 0.0, 0.0, 1.0, 0.0, 0.0};
     pgo::storage::HostBuffer<pgo::geometry::VertexIndex> edges{0, 1};

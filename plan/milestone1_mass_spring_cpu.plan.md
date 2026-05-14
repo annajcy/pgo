@@ -1350,7 +1350,7 @@ Phase 5 前补充 tinyobjloader adapter 测试：
 
 - [x] 读取包含 quad face / `vt` / `vn` / material token 的 OBJ，验证 triangulation 后输出 triangles。（已有 `vt`/`vn` token 测试覆盖）
 - [x] 验证 edge extraction deterministic。
-- [ ] 验证 degenerate face / out-of-range index 抛出异常。
+- [x] 验证 degenerate face / out-of-range index 抛出异常。
 - [x] 验证 public API 只测试 `read_obj_rest_mesh_3d`，不再暗示 float 或 Dim=2 reader 可用。
 - [x] 确认 repo 中没有 call site 继续调用 legacy `read_obj_rest_mesh<T, Dim>`。
 - [x] 删除 legacy 手写 OBJ parser，只保留 tinyobjloader-backed `read_obj_rest_mesh_3d`。
