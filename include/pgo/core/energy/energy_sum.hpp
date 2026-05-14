@@ -1,7 +1,7 @@
 #pragma once
 
-#include "pgo/energy/energy_concepts.hpp"
-#include "pgo/math/types.hpp"
+#include "pgo/core/energy/energy_concepts.hpp"
+#include "pgo/core/math/types.hpp"
 
 #include <tuple>
 #include <utility>

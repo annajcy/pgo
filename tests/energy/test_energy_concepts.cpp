@@ -1,4 +1,4 @@
-#include "pgo/energy/energy_concepts.hpp"
+#include "pgo/core/energy/energy_concepts.hpp"
 
 #include <gtest/gtest.h>
 #include <vector>

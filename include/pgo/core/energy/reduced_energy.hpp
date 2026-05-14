@@ -1,8 +1,8 @@
 #pragma once
 
-#include "pgo/dof/reduced_dof_map.hpp"
-#include "pgo/energy/energy_concepts.hpp"
-#include "pgo/math/types.hpp"
+#include "pgo/core/dof/reduced_dof_map.hpp"
+#include "pgo/core/energy/energy_concepts.hpp"
+#include "pgo/core/math/types.hpp"
 
 namespace pgo::energy {
 

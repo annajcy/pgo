@@ -1,6 +1,6 @@
-#include "pgo/assembly/cpu_assembler.hpp"
-#include "pgo/energy/mass_spring_local_energy_provider.hpp"
-#include "pgo/math/finite_difference.hpp"
+#include "pgo/core/assembly/cpu_assembler.hpp"
+#include "pgo/core/energy/mass_spring_local_energy_provider.hpp"
+#include "pgo/core/math/finite_difference.hpp"
 
 #include <array>
 #include <gtest/gtest.h>

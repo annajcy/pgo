@@ -1,4 +1,4 @@
-#include "pgo/assembly/cpu_assembler.hpp"
+#include "pgo/core/assembly/cpu_assembler.hpp"
 
 #include <gtest/gtest.h>
 #include <stdexcept>

@@ -1,5 +1,5 @@
-#include "pgo/energy/energy_sum.hpp"
-#include "pgo/math/types.hpp"
+#include "pgo/core/energy/energy_sum.hpp"
+#include "pgo/core/math/types.hpp"
 
 #include <gtest/gtest.h>
 #include <vector>

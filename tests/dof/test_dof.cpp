@@ -1,7 +1,7 @@
-#include "pgo/dof/dirichlet_boundary.hpp"
-#include "pgo/dof/displacement.hpp"
-#include "pgo/dof/dof_layout.hpp"
-#include "pgo/dof/reduced_dof_map.hpp"
+#include "pgo/core/dof/dirichlet_boundary.hpp"
+#include "pgo/core/dof/displacement.hpp"
+#include "pgo/core/dof/dof_layout.hpp"
+#include "pgo/core/dof/reduced_dof_map.hpp"
 
 #include <Eigen/SparseLU>
 #include <array>

@@ -4,8 +4,8 @@
 #include <type_traits>
 #include <vector>
 
-#include "pgo/storage/array_view.hpp"
-#include "pgo/storage/host_buffer.hpp"
+#include "pgo/core/storage/array_view.hpp"
+#include "pgo/core/storage/host_buffer.hpp"
 
 namespace pgo::storage::test {
 

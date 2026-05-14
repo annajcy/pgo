@@ -1,6 +1,6 @@
 #pragma once
 
-#include "pgo/math/types.hpp"
+#include "pgo/core/math/types.hpp"
 
 namespace pgo::assembly {
 

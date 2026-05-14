@@ -1,7 +1,7 @@
 #pragma once
 
-#include "pgo/base/assert.hpp"
-#include "pgo/math/types.hpp"
+#include "pgo/core/base/assert.hpp"
+#include "pgo/core/math/types.hpp"
 
 namespace pgo::energy {
 

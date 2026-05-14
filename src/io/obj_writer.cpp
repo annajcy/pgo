@@ -1,5 +1,5 @@
 #include "pgo/io/obj_writer.hpp"
-#include "pgo/base/assert.hpp"
+#include "pgo/core/base/assert.hpp"
 
 #include <filesystem>
 #include <fstream>

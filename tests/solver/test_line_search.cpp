@@ -1,6 +1,6 @@
-#include "pgo/solver/feasible_set.hpp"
-#include "pgo/solver/line_search.hpp"
-#include "pgo/solver/solver_options.hpp"
+#include "pgo/core/solver/feasible_set.hpp"
+#include "pgo/core/solver/line_search.hpp"
+#include "pgo/core/solver/solver_options.hpp"
 
 #include <gtest/gtest.h>
 #include <vector>

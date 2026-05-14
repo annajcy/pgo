@@ -1,4 +1,4 @@
-#include "pgo/math/types.hpp"
+#include "pgo/core/math/types.hpp"
 
 #include <gtest/gtest.h>
 #include <type_traits>

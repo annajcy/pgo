@@ -1,6 +1,6 @@
-#include "pgo/dof/dirichlet_boundary.hpp"
-#include "pgo/energy/reduced_energy.hpp"
-#include "pgo/math/types.hpp"
+#include "pgo/core/dof/dirichlet_boundary.hpp"
+#include "pgo/core/energy/reduced_energy.hpp"
+#include "pgo/core/math/types.hpp"
 
 #include <gtest/gtest.h>
 #include <vector>

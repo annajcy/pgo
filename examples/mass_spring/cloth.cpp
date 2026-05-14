@@ -1,13 +1,13 @@
-#include "pgo/dof/dirichlet_boundary.hpp"
-#include "pgo/dof/dof_layout.hpp"
-#include "pgo/dof/reduced_dof_map.hpp"
-#include "pgo/energy/assembled_energy.hpp"
-#include "pgo/energy/constant_force_energy.hpp"
-#include "pgo/energy/energy_sum.hpp"
-#include "pgo/energy/mass_spring_local_energy_provider.hpp"
-#include "pgo/geometry/rest_mesh.hpp"
-#include "pgo/integrator/backward_euler.hpp"
-#include "pgo/integrator/dynamic_state.hpp"
+#include "pgo/core/dof/dirichlet_boundary.hpp"
+#include "pgo/core/dof/dof_layout.hpp"
+#include "pgo/core/dof/reduced_dof_map.hpp"
+#include "pgo/core/energy/assembled_energy.hpp"
+#include "pgo/core/energy/constant_force_energy.hpp"
+#include "pgo/core/energy/energy_sum.hpp"
+#include "pgo/core/energy/mass_spring_local_energy_provider.hpp"
+#include "pgo/core/geometry/rest_mesh.hpp"
+#include "pgo/core/integrator/backward_euler.hpp"
+#include "pgo/core/integrator/dynamic_state.hpp"
 #if defined(PGO_ENABLE_ALEMBIC)
 #    include "pgo/io/abc_writer.hpp"
 #endif
@@ -18,7 +18,7 @@
 #else
 #    include "pgo/log/stdio_sink.hpp"
 #endif
-#include "pgo/solver/status_name.hpp"
+#include "pgo/core/solver/status_name.hpp"
 
 #include <CLI/CLI.hpp>
 #include <algorithm>

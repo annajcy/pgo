@@ -1,7 +1,7 @@
 #pragma once
 
-#include "pgo/assembly/local_matrix.hpp"
-#include "pgo/math/types.hpp"
+#include "pgo/core/assembly/local_matrix.hpp"
+#include "pgo/core/math/types.hpp"
 
 #include <concepts>
 #include <cstddef>

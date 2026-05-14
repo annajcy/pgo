@@ -1,4 +1,4 @@
-#include "pgo/base/assert.hpp"
+#include "pgo/core/base/assert.hpp"
 
 #include <gtest/gtest.h>
 #include <stdexcept>

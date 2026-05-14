@@ -1,6 +1,6 @@
 #pragma once
 
-#include "pgo/base/assert.hpp"
+#include "pgo/core/base/assert.hpp"
 
 #include <cstddef>
 

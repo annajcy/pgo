@@ -1,4 +1,4 @@
-#include "pgo/geometry/rest_mesh.hpp"
+#include "pgo/core/geometry/rest_mesh.hpp"
 
 #include <gtest/gtest.h>
 #include <stdexcept>

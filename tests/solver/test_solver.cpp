@@ -1,11 +1,11 @@
-#include "pgo/dof/dirichlet_boundary.hpp"
-#include "pgo/dof/reduced_dof_map.hpp"
-#include "pgo/energy/assembled_energy.hpp"
-#include "pgo/energy/energy_sum.hpp"
-#include "pgo/energy/mass_spring_local_energy_provider.hpp"
-#include "pgo/energy/reduced_energy.hpp"
-#include "pgo/geometry/rest_mesh.hpp"
-#include "pgo/solver/newton_solver.hpp"
+#include "pgo/core/dof/dirichlet_boundary.hpp"
+#include "pgo/core/dof/reduced_dof_map.hpp"
+#include "pgo/core/energy/assembled_energy.hpp"
+#include "pgo/core/energy/energy_sum.hpp"
+#include "pgo/core/energy/mass_spring_local_energy_provider.hpp"
+#include "pgo/core/energy/reduced_energy.hpp"
+#include "pgo/core/geometry/rest_mesh.hpp"
+#include "pgo/core/solver/newton_solver.hpp"
 
 #include <gtest/gtest.h>
 #include <vector>

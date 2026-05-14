@@ -1,11 +1,11 @@
 #pragma once
 
-#include "pgo/base/assert.hpp"
-#include "pgo/energy/energy_concepts.hpp"
-#include "pgo/solver/feasible_set.hpp"
-#include "pgo/solver/line_search.hpp"
-#include "pgo/solver/solver_options.hpp"
-#include "pgo/solver/solver_result.hpp"
+#include "pgo/core/base/assert.hpp"
+#include "pgo/core/energy/energy_concepts.hpp"
+#include "pgo/core/solver/feasible_set.hpp"
+#include "pgo/core/solver/line_search.hpp"
+#include "pgo/core/solver/solver_options.hpp"
+#include "pgo/core/solver/solver_result.hpp"
 
 #include <Eigen/SparseCholesky>
 

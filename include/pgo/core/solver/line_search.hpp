@@ -1,9 +1,9 @@
 #pragma once
 
-#include "pgo/base/assert.hpp"
-#include "pgo/energy/energy_concepts.hpp"
-#include "pgo/solver/feasible_set.hpp"
-#include "pgo/solver/solver_options.hpp"
+#include "pgo/core/base/assert.hpp"
+#include "pgo/core/energy/energy_concepts.hpp"
+#include "pgo/core/solver/feasible_set.hpp"
+#include "pgo/core/solver/solver_options.hpp"
 
 namespace pgo::solver {
 

@@ -1,8 +1,8 @@
 #pragma once
 
-#include "pgo/assembly/cpu_assembler.hpp"
-#include "pgo/energy/energy_concepts.hpp"
-#include "pgo/math/types.hpp"
+#include "pgo/core/assembly/cpu_assembler.hpp"
+#include "pgo/core/energy/energy_concepts.hpp"
+#include "pgo/core/math/types.hpp"
 
 namespace pgo::energy {
 

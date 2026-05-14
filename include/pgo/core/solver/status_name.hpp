@@ -1,6 +1,6 @@
 #pragma once
 
-#include "pgo/solver/solver_result.hpp"
+#include "pgo/core/solver/solver_result.hpp"
 
 #include <string_view>
 

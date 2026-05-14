@@ -173,6 +173,15 @@ cmake --build --preset release-accel --target pgo_benchmarks
 ./build/release-accel/benchmarks/pgo_benchmarks
 ```
 
+## Header Layout
+
+Numerical and simulation headers live under `include/pgo/core/`. Boundary modules
+remain outside core: `include/pgo/io/` and `include/pgo/log/`.
+
+Milestone 1 intentionally made this as a breaking include-path change and does
+not provide compatibility forwarding headers. The C/Python API boundary is tracked
+separately in `plan/c_py_api.md`.
+
 ## Logging
 
 `pgo::log` is a lightweight facade for examples, tools, and the C API bridge.

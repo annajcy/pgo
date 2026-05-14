@@ -1,5 +1,5 @@
-#include "pgo/assembly/cpu_assembler.hpp"
-#include "pgo/energy/assembled_energy.hpp"
+#include "pgo/core/assembly/cpu_assembler.hpp"
+#include "pgo/core/energy/assembled_energy.hpp"
 
 #include <gtest/gtest.h>
 #include <vector>

@@ -1,6 +1,6 @@
-#include "pgo/energy/constant_force_energy.hpp"
-#include "pgo/energy/energy_concepts.hpp"
-#include "pgo/solver/status_name.hpp"
+#include "pgo/core/energy/constant_force_energy.hpp"
+#include "pgo/core/energy/energy_concepts.hpp"
+#include "pgo/core/solver/status_name.hpp"
 
 #include <gtest/gtest.h>
 

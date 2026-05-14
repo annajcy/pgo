@@ -1,4 +1,4 @@
-#include "pgo/math/finite_difference.hpp"
+#include "pgo/core/math/finite_difference.hpp"
 
 #include <gtest/gtest.h>
 #include <stdexcept>

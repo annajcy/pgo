@@ -3610,15 +3610,15 @@ log.error(std::format("pgo_world_create_mass_spring failed: {}", e.what()));
 
 ```bash
 rg "pgo/log|spdlog" \
-  include/pgo/base \
-  include/pgo/math \
-  include/pgo/storage \
-  include/pgo/geometry \
-  include/pgo/dof \
-  include/pgo/assembly \
-  include/pgo/energy \
-  include/pgo/solver \
-  include/pgo/integrator
+  include/pgo/core/base \
+  include/pgo/core/math \
+  include/pgo/core/storage \
+  include/pgo/core/geometry \
+  include/pgo/core/dof \
+  include/pgo/core/assembly \
+  include/pgo/core/energy \
+  include/pgo/core/solver \
+  include/pgo/core/integrator
 ```
 
 期望：无匹配。
@@ -3899,7 +3899,7 @@ include/pgo/
 - 移动: `include/pgo/solver/*` -> `include/pgo/core/solver/*`
 - 移动: `include/pgo/integrator/*` -> `include/pgo/core/integrator/*`
 
-- [ ] **Step 1: 创建 core 目录并移动 headers**
+- [x] **Step 1: 创建 core 目录并移动 headers**
 
 ```bash
 mkdir -p include/pgo/core
@@ -3916,7 +3916,7 @@ git mv include/pgo/integrator include/pgo/core/integrator
 
 期望：`include/pgo/` 下只剩 `core/`、`io/`、`log/`；旧 core header directories 不存在。
 
-- [ ] **Step 2: 确认没有 compatibility headers**
+- [x] **Step 2: 确认没有 compatibility headers**
 
 ```bash
 test ! -d include/pgo/base
@@ -3942,7 +3942,7 @@ test ! -d include/pgo/integrator
 - 修改: `tests/**/*.cpp`
 - 修改: `tools/**/*.cpp`
 
-- [ ] **Step 1: 批量替换 core include 前缀**
+- [x] **Step 1: 批量替换 core include 前缀**
 
 将以下 include：
 
@@ -3974,7 +3974,7 @@ test ! -d include/pgo/integrator
 
 要求：`pgo/io/...`、`pgo/log/...` include 不改。若 `plan/c_py_api.md` 已经落地，`pgo_c/...` include 由该独立计划维护，本 phase 只迁移 core include。
 
-- [ ] **Step 2: 检查旧 core include 不再出现**
+- [x] **Step 2: 检查旧 core include 不再出现**
 
 ```bash
 rg '#include "pgo/(base|math|storage|geometry|dof|assembly|energy|solver|integrator)/' include src examples tests tools
@@ -3982,7 +3982,7 @@ rg '#include "pgo/(base|math|storage|geometry|dof|assembly|energy|solver|integra
 
 期望：无匹配。
 
-- [ ] **Step 3: 检查新 include path 覆盖 core modules**
+- [x] **Step 3: 检查新 include path 覆盖 core modules**
 
 ```bash
 rg '#include "pgo/core/(base|math|storage|geometry|dof|assembly|energy|solver|integrator)/' include src examples tests tools
@@ -3998,7 +3998,7 @@ rg '#include "pgo/core/(base|math|storage|geometry|dof|assembly|energy|solver|in
 - 修改: `.github/workflows/ci.yml`（如有 hardcoded path check）
 - 修改: 任何包含旧 include path 示例的文档
 
-- [ ] **Step 1: 更新 README include 示例和架构说明**
+- [x] **Step 1: 更新 README include 示例和架构说明**
 
 README 中记录：
 
@@ -4012,7 +4012,7 @@ not provide compatibility forwarding headers. The C/Python API boundary is track
 separately in `plan/c_py_api.md`.
 ```
 
-- [ ] **Step 2: 更新 plan 中的 path checks**
+- [x] **Step 2: 更新 plan 中的 path checks**
 
 将 plan 里的 core path 检查从：
 
@@ -4032,7 +4032,7 @@ include/pgo/core/base include/pgo/core/math ...
 
 `include/pgo/io`、`include/pgo/log` 保持原路径；`include/pgo_c` 如已存在则由 `plan/c_py_api.md` 单独维护。
 
-- [ ] **Step 3: 检查文档中没有旧 public include path 示例**
+- [x] **Step 3: 检查文档中没有旧 public include path 示例**
 
 ```bash
 rg 'pgo/(base|math|storage|geometry|dof|assembly|energy|solver|integrator)/' README.md plan .github
@@ -4045,7 +4045,7 @@ rg 'pgo/(base|math|storage|geometry|dof|assembly|energy|solver|integrator)/' REA
 **文件:**
 - 修改: `compile_commands.json`（由构建生成，不手动编辑）
 
-- [ ] **Step 1: 重新 configure/build debug**
+- [x] **Step 1: 重新 configure/build debug**
 
 ```bash
 cmake --preset debug
@@ -4055,7 +4055,7 @@ ctest --preset debug
 
 期望：所有 targets 和 tests 通过。
 
-- [ ] **Step 2: 运行 ASan/UBSan**
+- [x] **Step 2: 运行 ASan/UBSan**
 
 ```bash
 cmake --preset debug-asan
@@ -4065,7 +4065,7 @@ ctest --preset debug-asan
 
 期望：ASan/UBSan tests 通过。
 
-- [ ] **Step 3: 运行 boundary checks**
+- [x] **Step 3: 运行 boundary checks**
 
 ```bash
 rg "pgo/log|spdlog" \
@@ -4088,7 +4088,7 @@ rg "std::vector<.*Eigen|Eigen::Vector[234]|Eigen::Matrix<.*Dynamic" include/pgo/
 
 期望：无匹配，除了 `include/pgo/core/math` 中允许的 math aliases。
 
-- [ ] **Step 4: 运行 example smoke test**
+- [x] **Step 4: 运行 example smoke test**
 
 ```bash
 cmake --build --preset debug --target pgo_mass_spring_cloth
@@ -4216,10 +4216,10 @@ ctest --preset debug
 - [x] **Step 1: 检查 geometry/storage 不泄漏 Eigen object storage**
 
 ```bash
-rg "std::vector<.*Eigen|Eigen::Vector[234]|Eigen::Matrix<.*Dynamic" include/pgo/geometry include/pgo/storage
+rg "std::vector<.*Eigen|Eigen::Vector[234]|Eigen::Matrix<.*Dynamic" include/pgo/core/geometry include/pgo/core/storage
 ```
 
-期望：无匹配，除了 `include/pgo/math` 中允许的 math aliases。
+期望：无匹配，除了 `include/pgo/core/math` 中允许的 math aliases。
 
 - [x] **Step 2: 检查 solver variable 命名**
 
@@ -4232,7 +4232,7 @@ rg "current.*unknown|position.*unknown|optimize.*position|solver.* x" include ex
 - [x] **Step 3: 检查 local energy API**
 
 ```bash
-rg "local_count|local_dofs|local_value|local_gradient|local_hessian" include/pgo/energy include/pgo/assembly
+rg "local_count|local_dofs|local_value|local_gradient|local_hessian" include/pgo/core/energy include/pgo/core/assembly
 ```
 
 期望：energy/assembly 中存在 local contribution API。

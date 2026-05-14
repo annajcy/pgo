@@ -1,9 +1,9 @@
 #pragma once
 
-#include "pgo/base/assert.hpp"
-#include "pgo/dof/dirichlet_boundary.hpp"
-#include "pgo/math/types.hpp"
-#include "pgo/storage/array_view.hpp"
+#include "pgo/core/base/assert.hpp"
+#include "pgo/core/dof/dirichlet_boundary.hpp"
+#include "pgo/core/math/types.hpp"
+#include "pgo/core/storage/array_view.hpp"
 
 #include <cstddef>
 #include <limits>

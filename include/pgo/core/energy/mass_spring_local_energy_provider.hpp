@@ -1,11 +1,11 @@
 #pragma once
 
-#include "pgo/assembly/local_matrix.hpp"
-#include "pgo/base/assert.hpp"
-#include "pgo/geometry/rest_mesh.hpp"
-#include "pgo/math/types.hpp"
-#include "pgo/storage/array_view.hpp"
-#include "pgo/storage/host_buffer.hpp"
+#include "pgo/core/assembly/local_matrix.hpp"
+#include "pgo/core/base/assert.hpp"
+#include "pgo/core/geometry/rest_mesh.hpp"
+#include "pgo/core/math/types.hpp"
+#include "pgo/core/storage/array_view.hpp"
+#include "pgo/core/storage/host_buffer.hpp"
 
 #include <cstddef>
 #include <type_traits>

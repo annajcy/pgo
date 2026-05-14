@@ -2,8 +2,8 @@
 
 #if defined(PGO_ENABLE_ALEMBIC)
 
-#include "pgo/geometry/rest_mesh.hpp"
-#include "pgo/math/types.hpp"
+#include "pgo/core/geometry/rest_mesh.hpp"
+#include "pgo/core/math/types.hpp"
 
 #include <Alembic/AbcCoreOgawa/All.h>
 #include <Alembic/AbcGeom/All.h>

@@ -1,11 +1,11 @@
 #define TINYOBJLOADER_IMPLEMENTATION
 #include <tiny_obj_loader.h>
 
-#include "pgo/base/assert.hpp"
-#include "pgo/geometry/rest_mesh.hpp"
-#include "pgo/geometry/topology.hpp"
+#include "pgo/core/base/assert.hpp"
+#include "pgo/core/geometry/rest_mesh.hpp"
+#include "pgo/core/geometry/topology.hpp"
 #include "pgo/io/obj_reader.hpp"
-#include "pgo/storage/host_buffer.hpp"
+#include "pgo/core/storage/host_buffer.hpp"
 
 #include <filesystem>
 #include <limits>

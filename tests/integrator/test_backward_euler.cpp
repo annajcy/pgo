@@ -1,8 +1,8 @@
-#include "pgo/dof/dirichlet_boundary.hpp"
-#include "pgo/dof/reduced_dof_map.hpp"
-#include "pgo/energy/energy_concepts.hpp"
-#include "pgo/energy/inertial_energy.hpp"
-#include "pgo/integrator/backward_euler.hpp"
+#include "pgo/core/dof/dirichlet_boundary.hpp"
+#include "pgo/core/dof/reduced_dof_map.hpp"
+#include "pgo/core/energy/energy_concepts.hpp"
+#include "pgo/core/energy/inertial_energy.hpp"
+#include "pgo/core/integrator/backward_euler.hpp"
 
 #include <gtest/gtest.h>
 #include <vector>

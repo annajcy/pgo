@@ -1,7 +1,7 @@
 #pragma once
 
-#include "pgo/geometry/rest_mesh.hpp"
-#include "pgo/math/types.hpp"
+#include "pgo/core/geometry/rest_mesh.hpp"
+#include "pgo/core/math/types.hpp"
 
 #include <filesystem>
 #include <string>

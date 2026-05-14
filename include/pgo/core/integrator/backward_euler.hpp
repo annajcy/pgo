@@ -1,12 +1,12 @@
 #pragma once
 
-#include "pgo/dof/reduced_dof_map.hpp"
-#include "pgo/energy/energy_sum.hpp"
-#include "pgo/energy/inertial_energy.hpp"
-#include "pgo/energy/reduced_energy.hpp"
-#include "pgo/integrator/dynamic_state.hpp"
-#include "pgo/integrator/time_step_result.hpp"
-#include "pgo/solver/newton_solver.hpp"
+#include "pgo/core/dof/reduced_dof_map.hpp"
+#include "pgo/core/energy/energy_sum.hpp"
+#include "pgo/core/energy/inertial_energy.hpp"
+#include "pgo/core/energy/reduced_energy.hpp"
+#include "pgo/core/integrator/dynamic_state.hpp"
+#include "pgo/core/integrator/time_step_result.hpp"
+#include "pgo/core/solver/newton_solver.hpp"
 
 namespace pgo::integrator {
 
