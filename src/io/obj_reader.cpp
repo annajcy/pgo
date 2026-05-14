@@ -5,7 +5,6 @@
 #include "pgo/geometry/rest_mesh.hpp"
 #include "pgo/geometry/topology.hpp"
 #include "pgo/io/obj_reader.hpp"
-#include "pgo/math/types.hpp"
 #include "pgo/storage/host_buffer.hpp"
 
 #include <filesystem>

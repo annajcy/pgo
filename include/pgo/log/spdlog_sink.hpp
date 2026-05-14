@@ -23,6 +23,9 @@ private:
 };
 
 std::shared_ptr<Sink> make_default_spdlog_sink();
+std::shared_ptr<Sink> make_spdlog_file_sink(const std::string& path);
+std::shared_ptr<Sink> make_spdlog_rotating_file_sink(
+    const std::string& path, size_t max_size, size_t max_files);
 
 } // namespace pgo::log
 

@@ -7,6 +7,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 include(cmake/pgo_options.cmake)
 include(cmake/pgo_dependencies.cmake)
 include(cmake/pgo_eigen.cmake)
+include(cmake/pgo_project_options.cmake)
 include(cmake/pgo_warnings.cmake)
 include(cmake/pgo_sanitizers.cmake)
 
@@ -27,11 +28,13 @@ target_include_directories(pgo_core INTERFACE
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(pgo_core INTERFACE pgo::eigen_config)
+target_link_libraries(pgo_core INTERFACE pgo::eigen_config pgo::project_options)
 target_link_libraries(pgo_core INTERFACE pgo_project_warnings pgo_project_sanitizers)
 
 add_subdirectory(src/io)
 add_subdirectory(src/log)
+
+target_link_libraries(pgo_log PUBLIC pgo::project_options)
 
 if(PGO_BUILD_C_API AND EXISTS "${PROJECT_SOURCE_DIR}/src/c_api/CMakeLists.txt")
     add_subdirectory(src/c_api)

@@ -1252,7 +1252,7 @@ ctest --preset debug -R dof
 
 ## Phase 2: OBJ Mesh 输入和 OBJ Frame 输出
 
-**当前状态:** Task 2.1 tinyobjloader 迁移已完成。Hand-written OBJ parser 已删除，public API 为 `read_obj_rest_mesh_3d`，通过 `src/io/` compiled adapter 内部使用 tinyobjloader。Task 2.2 writer 3D-only 迁移待 Phase 5 前完成。
+**当前状态:** Task 2.1 tinyobjloader 迁移已完成。Hand-written OBJ parser 已删除，public API 为 `read_obj_rest_mesh_3d`，通过 `src/io/` compiled adapter 内部使用 tinyobjloader。Task 2.2 writer 3D-only 迁移已完成：`ObjWriter3d` + `AbcWriter3d` 均收窄为 concrete class，实现移至 `src/io/`。
 
 ### Task 2.1: 添加 OBJ reader（legacy header-only reader 已完成，Phase 5 前迁移）
 
@@ -1379,7 +1379,8 @@ ctest --preset debug -R obj
 ### Task 2.2: 添加 3D OBJ frame writer
 
 **文件:**
-- 创建: `include/pgo/io/obj_frame_writer.hpp`
+- 创建: `include/pgo/io/obj_writer.hpp`
+- 创建: `src/io/obj_writer.cpp`
 - 修改: `tests/io/test_obj_io.cpp`
 
 - [x] **Step 1: 实现 legacy `ObjFrameWriter<T, Dim>`**
@@ -1394,18 +1395,23 @@ ctest --preset debug -R obj
 
 Phase 5 前将 public writer API 收紧为 double + 3D：
 
-- [ ] **Step 1b: 将 writer API 改为 `ObjFrameWriter3d`**
+- [x] **Step 1b: 将 writer API 改为 `ObjWriter3d`**
 
-`include/pgo/io/obj_frame_writer.hpp` 暴露：
+`include/pgo/io/obj_writer.hpp` 暴露（声明），实现移至 `src/io/obj_writer.cpp`：
 
 ```cpp
 namespace pgo::io {
 
-class ObjFrameWriter3d {
+class ObjWriter3d {
 public:
-    void write_frame(const pgo::geometry::RestMesh<double, 3>& mesh,
-                     const pgo::math::DVec<double>& u,
-                     std::size_t frame_index);
+    explicit ObjWriter3d(std::filesystem::path output_dir);
+
+    [[nodiscard]] std::filesystem::path write_frame(
+        const pgo::geometry::RestMesh<double, 3>& mesh,
+        const pgo::math::DVec<double>& displacement);
+
+private:
+    [[nodiscard]] static std::string frame_name(std::size_t frame);
 };
 
 } // namespace pgo::io
@@ -1417,17 +1423,19 @@ public:
 - Writer 输入只接受 `RestMesh<double, 3>` 和 full displacement vector。
 - 写出的 vertex position 是 `X + u`。
 - 通过 `face_indices` 保留 triangular faces；如果 mesh 没有 faces，可以继续通过 `edge_indices` 写 `l` records。
-- 旧模板 writer 只作为迁移过渡存在；example/tests 全部改到 `ObjFrameWriter3d` 后删除 `ObjFrameWriter<T, Dim>`。
+- 旧模板 writer 已删除，替换为 concrete `ObjWriter3d`。
 
 - [x] **Step 2: 添加 legacy writer 测试**
 
 创建两点 line mesh，设置第二个点的 displacement，写出 frame 后检查 OBJ 文本包含 displaced vertex。
 
-Phase 5 前补充 3D-only writer 测试：
+Phase 5 前补充 3D-only writer 测试（已完成）：
 
-- [ ] 使用 `RestMesh<double, 3>` 写出 triangle mesh，检查 vertex 为 `X + u`。
-- [ ] 使用 line-only `RestMesh<double, 3>` 写出 `l` records。
-- [ ] 确认 public tests 不再暗示 `Dim=2` 或 `float` OBJ writer 可用。
+- [x] 使用 `RestMesh<double, 3>` 写出 triangle mesh，检查 vertex 为 `X + u`。
+- [x] 使用 line-only `RestMesh<double, 3>` 写出 `l` records。
+- [x] 确认 public tests 不再暗示 `Dim=2` 或 `float` OBJ writer 可用。
+- [x] displacement size mismatch 抛异常。
+- [x] `AbcWriter` 同步收窄为 `AbcWriter3d`，实现移至 `src/io/abc_writer.cpp`。
 
 - [x] **Step 3: 运行测试**
 
@@ -2766,7 +2774,7 @@ ctest --preset debug -R "Inertial|BackwardEuler|solver"
 
 ## Phase 4.6: `pgo::log` Facade
 
-**当前状态:** Tasks 4.6.1–4.6.5 已完成。core log facade（level/sink/logger/null_sink/stderr_sink/registry）、CMake target（`pgo::log`）、基础 log 测试、spdlog optional sink 及测试已落地。Tasks 4.6.6（examples/tools/C API bridge）和 4.6.7（边界检查）待后续实现。
+**当前状态:** Tasks 4.6.1–4.6.5 已完成。core log facade（level/sink/logger/null_sink/stderr_sink/registry）、CMake target（`pgo::log`）、基础 log 测试、spdlog optional sink 及测试已落地。Task 4.6.6 example/tool logging 已完成。C API bridge logging 明确并入 Phase 6，不提前创建空 C API。Task 4.6.7 边界检查已完成（core numerical headers 无 log include，CI 包含 log 测试）。
 
 **Phase 4.6 目标:** 实现一个轻量 logging facade：
 
@@ -3534,7 +3542,7 @@ ctest --preset debug-all -R "Spdlog|Log|Registry|NullSink"
 - 修改: `src/c_api/CMakeLists.txt`（Phase 6 创建后）
 - 修改: `src/c_api/pgo_c.cpp`（Phase 6 创建后）
 
-- [ ] **Step 1: example 链接 `pgo::log`**
+- [x] **Step 1: example 链接 `pgo::log`**
 
 `examples/CMakeLists.txt` 中让 `pgo_mass_spring_cloth` 链接：
 
@@ -3548,7 +3556,7 @@ target_link_libraries(pgo_mass_spring_cloth
 )
 ```
 
-- [ ] **Step 2: cloth example 使用 named logger**
+- [x] **Step 2: cloth example 使用 named logger**
 
 `examples/mass_spring_cloth.cpp` 加入：
 
@@ -3577,7 +3585,7 @@ log.info(std::format(
 
 遇到 failure 时使用 `log.error(...)` 后返回非零状态；不要在 solver/integrator 内部打日志。
 
-- [ ] **Step 3: Alembic tool 使用 named logger**
+- [x] **Step 3: Alembic tool 使用 named logger**
 
 `tools/CMakeLists.txt`:
 
@@ -3592,7 +3600,7 @@ auto log = pgo::log::get("pgo.tool.obj_frames_to_abc");
 log.info(std::format("frames={}, fps={}, output={}", frames.size(), fps, output.string()));
 ```
 
-- [ ] **Step 4: C API bridge 内部使用 logging，但 public header 不暴露 logging**
+- [ ] **Step 4: C API bridge 内部使用 logging（并入 Phase 6）**
 
 Phase 6 创建 `src/c_api/pgo_c.cpp` 后，可以在 catch block 中使用：
 
@@ -3613,7 +3621,7 @@ log.error(std::format("pgo_world_create_mass_spring failed: {}", e.what()));
 - 修改: `.github/workflows/ci.yml`
 - 修改: `README.md`
 
-- [ ] **Step 1: 本地检查 core numerical modules 不 include logging**
+- [x] **Step 1: 本地检查 core numerical modules 不 include logging**
 
 ```bash
 rg "pgo/log|spdlog" \
@@ -3630,7 +3638,7 @@ rg "pgo/log|spdlog" \
 
 期望：无匹配。
 
-- [ ] **Step 2: 默认无 spdlog 构建**
+- [x] **Step 2: 默认无 spdlog 构建**
 
 ```bash
 conan install . \

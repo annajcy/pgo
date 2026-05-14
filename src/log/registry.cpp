@@ -1,12 +1,12 @@
 #include "pgo/log/registry.hpp"
-#include "pgo/log/stderr_sink.hpp"
+#include "pgo/log/stdio_sink.hpp"
 
 #include <utility>
 
 namespace pgo::log {
 
 Registry::Registry()
-    : Registry{std::make_shared<StderrSink>(), Level::info, "pgo"} {}
+    : Registry{std::make_shared<StdIOSink>(), Level::info, "pgo"} {}
 
 Registry::Registry(std::shared_ptr<Sink> sink, Level threshold, std::string root_name)
     : m_sink{std::move(sink)},

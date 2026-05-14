@@ -1,4 +1,4 @@
-#include "pgo/io/obj_frame_writer.hpp"
+#include "pgo/io/obj_writer.hpp"
 #include "pgo/io/obj_reader.hpp"
 
 #include <filesystem>
@@ -50,7 +50,7 @@ TEST(obj_reader, ReadsTriangularMeshAndExtractsUniqueEdges) {
     EXPECT_EQ(2, mesh.face_vertex(0, 2));
 }
 
-TEST(obj_frame_writer, WritesDisplacedLineFrameWhenMeshHasNoFaces) {
+TEST(obj_writer3d, WritesDisplacedLineFrameWhenMeshHasNoFaces) {
     pgo::storage::HostBuffer<double> positions{0.0, 0.0, 0.0, 1.0, 0.0, 0.0};
     pgo::storage::HostBuffer<pgo::geometry::VertexIndex> edges{0, 1};
     const pgo::geometry::RestMesh<double, 3> mesh{std::move(positions), std::move(edges)};
@@ -60,12 +60,66 @@ TEST(obj_frame_writer, WritesDisplacedLineFrameWhenMeshHasNoFaces) {
 
     const auto dir = test_output_dir() / "frames";
     std::filesystem::remove_all(dir);
-    pgo::io::ObjFrameWriter<double, 3> writer{dir};
+    pgo::io::ObjWriter3d writer{dir};
     const auto path = writer.write_frame(mesh, displacement);
 
     const auto text = read_text(path);
     EXPECT_NE(std::string::npos, text.find("v 1.5 0.25 -0.5"));
     EXPECT_NE(std::string::npos, text.find("l 1 2"));
+}
+
+TEST(obj_writer3d, WritesTriangleFaceRecords) {
+    pgo::storage::HostBuffer<double> positions{
+        0.0, 0.0, 0.0,
+        1.0, 0.0, 0.0,
+        1.0, 1.0, 0.0};
+    pgo::storage::HostBuffer<pgo::geometry::VertexIndex> faces{0, 1, 2};
+    const pgo::geometry::RestMesh<double, 3> mesh{std::move(positions), {}, std::move(faces)};
+
+    pgo::math::DVec<double> displacement{9};
+    displacement.setZero();
+
+    const auto dir = test_output_dir() / "frames_tri";
+    std::filesystem::remove_all(dir);
+    pgo::io::ObjWriter3d writer{dir};
+    const auto path = writer.write_frame(mesh, displacement);
+
+    const auto text = read_text(path);
+    EXPECT_NE(std::string::npos, text.find("f 1 2 3"));
+}
+
+TEST(obj_writer3d, VertexPositionsEqualRestPlusDisplacement) {
+    pgo::storage::HostBuffer<double> positions{
+        0.0, 0.0, 0.0,
+        2.0, 0.0, 0.0};
+    pgo::storage::HostBuffer<pgo::geometry::VertexIndex> edges{0, 1};
+    const pgo::geometry::RestMesh<double, 3> mesh{std::move(positions), std::move(edges)};
+
+    pgo::math::DVec<double> displacement{6};
+    displacement << 0.5, 0.25, 0.125, 0.25, 0.5, 0.75;
+
+    const auto dir = test_output_dir() / "frames_vpos";
+    std::filesystem::remove_all(dir);
+    pgo::io::ObjWriter3d writer{dir};
+    const auto path = writer.write_frame(mesh, displacement);
+
+    const auto text = read_text(path);
+    EXPECT_NE(std::string::npos, text.find("v 0.5 0.25 0.125"));
+    EXPECT_NE(std::string::npos, text.find("v 2.25 0.5 0.75"));
+}
+
+TEST(obj_writer3d, ThrowsOnDisplacementSizeMismatch) {
+    pgo::storage::HostBuffer<double> positions{0.0, 0.0, 0.0, 1.0, 0.0, 0.0};
+    pgo::storage::HostBuffer<pgo::geometry::VertexIndex> edges{0, 1};
+    const pgo::geometry::RestMesh<double, 3> mesh{std::move(positions), std::move(edges)};
+
+    pgo::math::DVec<double> displacement{4}; // wrong: needs 6
+    displacement.setZero();
+
+    const auto dir = test_output_dir() / "frames_err";
+    std::filesystem::remove_all(dir);
+    pgo::io::ObjWriter3d writer{dir};
+    EXPECT_THROW(std::ignore = writer.write_frame(mesh, displacement), std::exception);
 }
 
 } // namespace pgo::io::test

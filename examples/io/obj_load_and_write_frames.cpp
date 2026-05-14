@@ -1,6 +1,11 @@
-#include "pgo/base/assert.hpp"
-#include "pgo/io/obj_frame_writer.hpp"
 #include "pgo/io/obj_reader.hpp"
+#include "pgo/io/obj_writer.hpp"
+#include "pgo/log/registry.hpp"
+#if defined(PGO_ENABLE_SPDLOG)
+#    include "pgo/log/spdlog_sink.hpp"
+#else
+#    include "pgo/log/stdio_sink.hpp"
+#endif
 
 #include <CLI/CLI.hpp>
 #include <cmath>
@@ -8,7 +13,7 @@
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
-#include <iostream>
+#include <format>
 #include <numbers>
 
 namespace {
@@ -18,6 +23,7 @@ struct Options {
     std::filesystem::path output = "output/example/io/obj_frames";
     std::size_t frames = 20;
     double amplitude = 0.02;
+    std::string log_file;
 };
 
 [[nodiscard]] Options parse_options(const int argc, char** argv) {
@@ -28,6 +34,7 @@ struct Options {
     app.add_option("--output", options.output, "Output directory for frame_*.obj files");
     app.add_option("--frames", options.frames, "Number of frames to write")->check(CLI::Range(2U, 1000000U));
     app.add_option("--amplitude", options.amplitude, "Displacement amplitude")->check(CLI::NonNegativeNumber);
+    app.add_option("--log", options.log_file, "Log output file path (redirects from stderr/stdout)");
 
     app.parse(argc, argv);
     return options;
@@ -36,11 +43,26 @@ struct Options {
 } // namespace
 
 int main(int argc, char** argv) {
+    const auto options = parse_options(argc, argv);
+
+    if (!options.log_file.empty()) {
+#if defined(PGO_ENABLE_SPDLOG)
+        pgo::log::set_sink(pgo::log::make_spdlog_file_sink(options.log_file));
+#else
+        pgo::log::set_sink(std::make_shared<pgo::log::StdIOSink>(options.log_file));
+#endif
+    }
+#if defined(PGO_ENABLE_SPDLOG)
+    else {
+        pgo::log::set_sink(pgo::log::make_default_spdlog_sink());
+    }
+#endif
+
+    auto logger = pgo::log::get("examples.io.obj_frames");
     try {
-        const auto options = parse_options(argc, argv);
 
         const auto mesh = pgo::io::read_obj_rest_mesh_3d(options.input);
-        pgo::io::ObjFrameWriter<double, 3> writer{options.output};
+        pgo::io::ObjWriter3d writer{options.output};
 
         pgo::math::DVec<double> displacement{pgo::math::dense_index(mesh.num_vertices() * static_cast<std::size_t>(3))};
         std::filesystem::path last_frame;
@@ -57,16 +79,16 @@ int main(int argc, char** argv) {
             last_frame = writer.write_frame(mesh, displacement);
         }
 
-        std::cout << "input: " << options.input << '\n';
-        std::cout << "output: " << options.output << '\n';
-        std::cout << "vertices: " << mesh.num_vertices() << '\n';
-        std::cout << "edges: " << mesh.num_edges() << '\n';
-        std::cout << "faces: " << mesh.num_faces() << '\n';
-        std::cout << "frames: " << options.frames << '\n';
-        std::cout << "last_frame: " << last_frame << '\n';
+        logger.info(std::format("input: {}\n", options.input.string()));
+        logger.info(std::format("output: {}\n", options.output.string()));
+        logger.info(std::format("vertices: {}\n", mesh.num_vertices()));
+        logger.info(std::format("edges: {}\n", mesh.num_edges()));
+        logger.info(std::format("faces: {}\n", mesh.num_faces()));
+        logger.info(std::format("frames: {}\n", options.frames));
+        logger.info(std::format("last_frame: {}\n", last_frame.string()));
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {
-        std::cerr << "error: " << error.what() << '\n';
+        logger.error(std::format("error: {}\n", error.what()));
         return EXIT_FAILURE;
     }
 }

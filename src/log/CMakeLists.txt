@@ -1,6 +1,6 @@
 add_library(pgo_log
     registry.cpp
-    stderr_sink.cpp
+    stdio_sink.cpp
 )
 add_library(pgo::log ALIAS pgo_log)
 

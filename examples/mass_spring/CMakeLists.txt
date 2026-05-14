@@ -3,6 +3,7 @@ target_link_libraries(pgo_mass_spring_cloth
     PRIVATE
         pgo::core
         pgo::io
+        pgo::log
         CLI11::CLI11
 )
 
@@ -11,5 +12,6 @@ target_link_libraries(pgo_mass_spring_bunny_cloth
     PRIVATE
         pgo::core
         pgo::io
+        pgo::log
         CLI11::CLI11
 )

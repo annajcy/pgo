@@ -4,14 +4,21 @@
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
+#include <format>
 #include <fstream>
-#include <iostream>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "pgo/log/registry.hpp"
+#if defined(PGO_ENABLE_SPDLOG)
+#    include "pgo/log/spdlog_sink.hpp"
+#else
+#    include "pgo/log/stdio_sink.hpp"
+#endif
 
 namespace {
 
@@ -23,6 +30,7 @@ struct Options {
     std::filesystem::path frames_dir;
     std::filesystem::path output;
     double fps = 24.0;
+    std::string log_file;
 };
 
 struct ObjFrame {
@@ -35,6 +43,7 @@ void configure_cli(CLI::App& app, Options& options) {
     app.add_option("--frames-dir", options.frames_dir, "Directory containing frame_*.obj files")->required();
     app.add_option("--output", options.output, "Output Alembic .abc path")->required();
     app.add_option("--fps", options.fps, "Uniform frame rate for Alembic time sampling")->check(CLI::PositiveNumber);
+    app.add_option("--log", options.log_file, "Log output file path (redirects from stderr/stdout)");
 }
 
 [[nodiscard]] std::vector<std::filesystem::path> frame_paths(const std::filesystem::path& frames_dir) {
@@ -192,6 +201,20 @@ int main(int argc, char** argv) {
         return app.exit(error);
     }
 
+    if (!options.log_file.empty()) {
+#if defined(PGO_ENABLE_SPDLOG)
+        pgo::log::set_sink(pgo::log::make_spdlog_file_sink(options.log_file));
+#else
+        pgo::log::set_sink(std::make_shared<pgo::log::StdIOSink>(options.log_file));
+#endif
+    }
+#if defined(PGO_ENABLE_SPDLOG)
+    else {
+        pgo::log::set_sink(pgo::log::make_default_spdlog_sink());
+    }
+#endif
+
+    auto logger = pgo::log::get("tools.obj_frames_to_abc");
     try {
         const auto paths = frame_paths(options.frames_dir);
         const auto frames = load_frames(paths);
@@ -202,7 +225,7 @@ int main(int argc, char** argv) {
             face_indices.push_back(static_cast<std::uint32_t>(idx));
         }
 
-        pgo::io::AbcWriter<double, 3> writer{
+        pgo::io::AbcWriter3d writer{
             options.output, options.fps,
             std::span<const std::uint32_t>{face_indices.data(), face_indices.size()},
             std::span<const int>{frames.front().face_counts.data(), frames.front().face_counts.size()}};
@@ -211,16 +234,16 @@ int main(int argc, char** argv) {
             writer.write_frame(std::span<const float>{frame.positions.data(), frame.positions.size()});
         }
 
-        std::cout << "frames: " << frames.size() << '\n';
-        std::cout << "vertices: " << frames.front().positions.size() / 3 << '\n';
-        std::cout << "faces: " << frames.front().face_counts.size() << '\n';
-        std::cout << "fps: " << options.fps << '\n';
-        std::cout << "output: " << options.output << '\n';
-        std::cout << "first_frame: " << paths.front() << '\n';
-        std::cout << "last_frame: " << paths.back() << '\n';
+        logger.info(std::format("frames: {}\n", frames.size()));
+        logger.info(std::format("vertices: {}\n", frames.front().positions.size() / 3));
+        logger.info(std::format("faces: {}\n", frames.front().face_counts.size()));
+        logger.info(std::format("fps: {}\n", options.fps));
+        logger.info(std::format("output: {}\n", options.output.string()));
+        logger.info(std::format("first_frame: {}\n", paths.front().string()));
+        logger.info(std::format("last_frame: {}\n", paths.back().string()));
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {
-        std::cerr << "error: " << error.what() << '\n';
+        logger.error(std::format("error: {}\n", error.what()));
         return EXIT_FAILURE;
     }
 }

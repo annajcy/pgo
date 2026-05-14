@@ -1,6 +1,11 @@
 add_library(pgo_io STATIC
     obj_reader.cpp
+    obj_writer.cpp
 )
+
+if(PGO_ENABLE_ALEMBIC)
+    target_sources(pgo_io PRIVATE abc_writer.cpp)
+endif()
 add_library(pgo::io ALIAS pgo_io)
 
 target_compile_features(pgo_io PUBLIC cxx_std_23)

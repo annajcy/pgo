@@ -11,8 +11,14 @@
 #if defined(PGO_ENABLE_ALEMBIC)
 #    include "pgo/io/abc_writer.hpp"
 #endif
-#include "pgo/io/obj_frame_writer.hpp"
 #include "pgo/io/obj_reader.hpp"
+#include "pgo/io/obj_writer.hpp"
+#include "pgo/log/registry.hpp"
+#if defined(PGO_ENABLE_SPDLOG)
+#    include "pgo/log/spdlog_sink.hpp"
+#else
+#    include "pgo/log/stdio_sink.hpp"
+#endif
 #include "pgo/solver/status_name.hpp"
 
 #include <CLI/CLI.hpp>
@@ -20,7 +26,6 @@
 #include <cstdlib>
 #include <filesystem>
 #include <format>
-#include <iostream>
 #include <limits>
 #include <optional>
 
@@ -36,6 +41,7 @@ struct Options {
     double dt = 0.001;
     int ramp_frames = 10;
     double pin_fraction = 0.05;
+    std::string log_file;
 };
 
 [[nodiscard]] Options parse_options(int argc, char** argv) {
@@ -51,6 +57,7 @@ struct Options {
     app.add_option("--dt", opts.dt, "Timestep size")->check(CLI::PositiveNumber);
     app.add_option("--ramp-frames", opts.ramp_frames, "Gravity ramp duration (0 = constant force)");
     app.add_option("--pin-fraction", opts.pin_fraction, "Fraction of top-Y vertices to pin (0-1)")->check(CLI::Range(0.0, 1.0));
+    app.add_option("--log", opts.log_file, "Log output file path (redirects from stderr/stdout)");
 
     app.parse(argc, argv);
     return opts;
@@ -70,8 +77,24 @@ struct Options {
 } // namespace
 
 int main(int argc, char** argv) {
+    const auto opts = parse_options(argc, argv);
+
+    if (!opts.log_file.empty()) {
+#if defined(PGO_ENABLE_SPDLOG)
+        pgo::log::set_sink(pgo::log::make_spdlog_file_sink(opts.log_file));
+#else
+        pgo::log::set_sink(std::make_shared<pgo::log::StdIOSink>(opts.log_file));
+#endif
+    }
+#if defined(PGO_ENABLE_SPDLOG)
+    else {
+        pgo::log::set_sink(pgo::log::make_default_spdlog_sink());
+    }
+#endif
+
+    auto logger = pgo::log::get("examples.mass_spring.bunny_cloth");
+    logger.info("Starting mass-spring bunny cloth simulation\n");
     try {
-        const auto opts = parse_options(argc, argv);
 
         const auto mesh = pgo::io::read_obj_rest_mesh_3d(opts.input);
         const auto num_dofs = mesh.num_vertices() * 3;
@@ -118,11 +141,11 @@ int main(int argc, char** argv) {
         newton_opts.initial_regularization = 1e-6;
 
         std::filesystem::create_directories(opts.output);
-        pgo::io::ObjFrameWriter<double, 3> writer{opts.output};
+        pgo::io::ObjWriter3d writer{opts.output};
 
         std::vector<int> face_counts(mesh.num_faces(), 3);
 #if defined(PGO_ENABLE_ALEMBIC)
-        std::optional<pgo::io::AbcWriter<double, 3>> abc_writer;
+        std::optional<pgo::io::AbcWriter3d> abc_writer;
         if (!opts.abc_output.empty()) {
             abc_writer.emplace(opts.abc_output, 1.0 / opts.dt,
                                mesh.face_indices(),
@@ -149,9 +172,12 @@ int main(int argc, char** argv) {
                                                 /*commit_on_failure=*/true);
 
             if (result.status != pgo::solver::SolverStatus::converged) {
-                std::cerr << std::format("Frame {} warning: status={}, iterations={}, value={}, grad_norm={}\n",
+                logger.warn(std::format("Frame {} warning: status={}, iterations={}, value={}, grad_norm={}\n",
                                          step + 1, pgo::solver::status_name(result.status),
-                                         result.solver_iterations, result.final_value, result.final_gradient_norm);
+                                         result.solver_iterations, result.final_value, result.final_gradient_norm));
+            } else {
+                logger.info(std::format("Frame {} solved: iterations={}, value={}, grad_norm={}\n",
+                                         step + 1, result.solver_iterations, result.final_value, result.final_gradient_norm));
             }
 
             static_cast<void>(writer.write_frame(mesh, state.u));
@@ -160,21 +186,21 @@ int main(int argc, char** argv) {
 #endif
         }
 
-        std::cout << std::format("input: {}\n", opts.input.string());
-        std::cout << std::format("vertices: {}  edges: {}  faces: {}\n",
-                                 mesh.num_vertices(), mesh.num_edges(), mesh.num_faces());
-        std::cout << std::format("Y range: [{:.4f}, {:.4f}]  pin threshold: {:.4f}  pinned: {}\n",
-                                 min_y, max_y, pin_threshold, pinned_count);
-        std::cout << std::format("output: {}\n", opts.output.string());
+        logger.info(std::format("input: {}\n", opts.input.string()));
+        logger.info(std::format("vertices: {}  edges: {}  faces: {}\n",
+                                 mesh.num_vertices(), mesh.num_edges(), mesh.num_faces()));
+        logger.info(std::format("Y range: [{:.4f}, {:.4f}]  pin threshold: {:.4f}  pinned: {}\n",
+                                 min_y, max_y, pin_threshold, pinned_count));
+        logger.info(std::format("output: {}\n", opts.output.string()));
         if (!opts.abc_output.empty()) {
-            std::cout << std::format("abc: {}\n", opts.abc_output.string());
+            logger.info(std::format("abc: {}\n", opts.abc_output.string()));
         }
-        std::cout << std::format("free dofs: {} / {}\n", dof_map.free_dofs(), dof_map.full_dofs());
-        std::cout << std::format("frames: {}  dt: {}  stiffness: {}  gravity: {}\n",
-                                 opts.frames, opts.dt, opts.stiffness, opts.gravity);
+        logger.info(std::format("free dofs: {} / {}\n", dof_map.free_dofs(), dof_map.full_dofs()));
+        logger.info(std::format("frames: {}  dt: {}  stiffness: {}  gravity: {}\n",
+                                 opts.frames, opts.dt, opts.stiffness, opts.gravity));
         return 0;
     } catch (const std::exception& e) {
-        std::cerr << "error: " << e.what() << '\n';
+        logger.error(std::format("error: {}\n", e.what()));
         return 1;
     }
 }
