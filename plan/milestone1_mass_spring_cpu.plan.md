@@ -2,11 +2,11 @@
 
 > **给 agentic workers:** 必须使用 `superpowers:subagent-driven-development`（推荐）或 `superpowers:executing-plans` 按任务执行。本计划使用 checkbox (`- [ ]`) 语法追踪进度。
 
-**目标:** 完成 Milestone 1：实现一个 CPU-only、GPU-aware 的 C++23 header-oriented mass-spring simulation core。它读取 rest mesh，优化 displacement `u`，输出 OBJ frame sequence，并提供最小稳定的 C99 动态库 API。
+**目标:** 完成 Milestone 1：实现一个 CPU-only、GPU-aware 的 C++23 header-oriented mass-spring simulation core。它读取 rest mesh，优化 displacement `u`，输出 OBJ frame sequence，并为后续 C/Python API 保持清晰边界。
 
-**架构:** 内部核心是现代 C++23 template/header-only library；对外二进制接口是 compiled C99 ABI dynamic library。CPU 实现优先，但数据布局和 energy interface 从第一天就为 Milestone 2 的 Vulkan/Slang GPU backend 留好边界：flat storage、显式 `X + u`、local contribution API、独立 assembly 层、geometry/storage 不持有 Eigen object。
+**架构:** 内部核心是现代 C++23 template/header-oriented library；C99 ABI facade 和 nanobind Python package 已拆分到 `plan/c_py_api.md`。CPU 实现优先，但数据布局和 energy interface 从第一天就为 Milestone 2 的 Vulkan/Slang GPU backend 留好边界：flat storage、显式 `X + u`、local contribution API、独立 assembly 层、geometry/storage 不持有 Eigen object。
 
-**技术栈:** C++23、C99 ABI、CMake Presets、Conan 2、Eigen、GoogleTest、CLI11、tinyobjloader、Alembic (optional)、spdlog (optional)、clang-format、GitHub Actions。
+**技术栈:** C++23、CMake Presets、Conan 2、Eigen、GoogleTest、CLI11、tinyobjloader、Alembic (optional)、spdlog (optional)、clang-format、GitHub Actions。
 
 ---
 
@@ -19,17 +19,16 @@
 - Eigen 只通过 `pgo::math::eigen::EigenBackend` 和 `pgo::math` 默认 aliases 用于 CPU 数值计算和 sparse solve；`geometry/` 与 `storage/` 不存储 `Eigen::Vector3d`、`Eigen::MatrixXd` 等对象。
 - Eigen CPU acceleration 是构建配置层：`PGO_ENABLE_EIGEN_ACCELERATION` 只控制 Eigen 调用 BLAS/LAPACK 类 backend（Apple Accelerate 或 MKL），不等同于选择 sparse linear solver。
 - PARDISO 属于 linear solver backend 候选，不属于 `MathBackend`。后续应通过 `PGO_CPU_LINEAR_SOLVER` 或 solver policy 选择 `Eigen::PardisoLDLT` / `Eigen::SimplicialLDLT` / CG，而不是塞进 Eigen acceleration 开关。
-- 不引入 `fmt` 第三方依赖；需要格式化字符串时使用标准库 `<format>` / `std::format`。核心库应尽量少做格式化，C API 错误消息用固定 buffer 写入。
+- 不引入 `fmt` 第三方依赖；需要格式化字符串时使用标准库 `<format>` / `std::format`。核心库应尽量少做格式化；C/Python API 相关错误消息由 `plan/c_py_api.md` 的 ABI 层处理。
 - Energy model 必须暴露 local contribution API，使 CPU assembly 和未来 GPU kernel 能共享同一语义边界。
-- Milestone 1 只实现 CPU assembly、CPU Newton solver、OBJ input/output、C99 ABI facade。
+- Milestone 1 只实现 CPU assembly、CPU Newton solver、OBJ input/output 和 example pipeline；C99 ABI facade 与 nanobind Python API 由 `plan/c_py_api.md` 单独实现。
 - Milestone 1 OBJ loading 是 compiled IO adapter，不属于 header-oriented simulation core。`pgo::io` 私有使用 tinyobjloader，公开只承诺 `read_obj_rest_mesh_3d(path) -> RestMesh<double, 3>`。
 - `RestMesh<T, Dim>` 仍然是项目自己的 flat storage；tinyobjloader types、materials、normals、UVs、shape/group metadata 不得越过 `pgo::io` 边界。
 - Milestone 1 IO 层整体只承诺 double precision 3D OBJ：`read_obj_rest_mesh_3d(...)` 和 `ObjFrameWriter3d`。2D 测试直接构造 `RestMesh<T, 2>`，不通过 OBJ IO。
 - Phase 5 是 application pipeline validation：不新增 `SimulationWorld`、`Scene`、`IntegratorBase`、runtime energy registry、material system、bending/collision/contact/GPU path。
-- 引入轻量 `pgo::log` facade，但 core numerical modules 不依赖它。默认 backend 不依赖 spdlog；spdlog 只能作为 optional sink backend 给 examples/tools/C API bridge 使用。
-- C++ template、STL、Eigen、异常、allocator 内部细节不能越过 C ABI 边界。
-- C API 只暴露 `extern "C"`、opaque handles、POD descriptors、pointer/count arrays、status code、explicit destroy/copy functions。
-- C bridge 的 `.cpp` 内部可以使用现代 C++、STL、RAII、Eigen，但所有 exported C function 必须 catch exceptions 并转换为 `pgo_status_t` + `pgo_error_t`。
+- 引入轻量 `pgo::log` facade，但 core numerical modules 不依赖它。默认 backend 不依赖 spdlog；spdlog 只能作为 optional sink backend 给 examples/tools 和后续 API bridge 使用。
+- C++ template、STL、Eigen、异常、allocator 内部细节不能成为对外二进制接口；`plan/c_py_api.md` 负责把这些约束落到 C99 ABI 和 Python package。
+- GNU static runtime linking 是发布打包选项，不是开发默认值。`PGO_STATIC_GNU_RUNTIME` 默认 `OFF`，只在 Linux + GNU packaging 场景下显式开启，优先用于 CLI/package target；不要默认塞进 shared library。
 - Alembic 不进入 C++ core。`.abc` 由独立 C++ tool 消费 OBJ frames 后生成，通过 Conan 管理 Alembic/Imath 依赖。Alembic 是 optional dependency，由 `PGO_ENABLE_ALEMBIC` (CMake) / `enable_alembic` (Conan) 门控，默认 OFF，仅在 `-all` preset 下启用。关闭时 `pgo::io` 仅保留 tinyobjloader OBJ IO。
 - Vulkan、Slang、GPU reductions、GPU linear solver、contact、IPC、FEM、time integrator 不属于 Milestone 1。
 
@@ -102,9 +101,6 @@
         sink.hpp
         spdlog_sink.hpp
         stderr_sink.hpp
-    pgo_c/
-      export.h
-      pgo.h
   src/
     io/
       CMakeLists.txt
@@ -114,9 +110,6 @@
       registry.cpp
       spdlog_sink.cpp
       stderr_sink.cpp
-    c_api/
-      CMakeLists.txt
-      pgo_c.cpp
   examples/
     assets/
       cloth_grid.obj
@@ -145,8 +138,6 @@
       test_backend.cpp
       test_eigen_config.cpp
       test_finite_difference.cpp
-    pgo_c/
-      test_c_api.c
     solver/
       test_solver.cpp
   tools/
@@ -334,10 +325,6 @@ if(EXISTS "${PROJECT_SOURCE_DIR}/src/io/CMakeLists.txt")
     add_subdirectory(src/io)
 endif()
 
-if(PGO_BUILD_C_API AND EXISTS "${PROJECT_SOURCE_DIR}/src/c_api/CMakeLists.txt")
-    add_subdirectory(src/c_api)
-endif()
-
 if(PGO_BUILD_EXAMPLES AND EXISTS "${PROJECT_SOURCE_DIR}/examples/CMakeLists.txt")
     add_subdirectory(examples)
 endif()
@@ -353,7 +340,6 @@ endif()
 ```cmake
 option(PGO_BUILD_TESTS "Build pgo tests" ON)
 option(PGO_BUILD_EXAMPLES "Build pgo examples" ON)
-option(PGO_BUILD_C_API "Build C99 shared-library API" ON)
 option(PGO_ENABLE_SANITIZERS "Enable address and undefined behavior sanitizers" OFF)
 option(PGO_WARNINGS_AS_ERRORS "Treat warnings as errors" OFF)
 option(PGO_ENABLE_GPU "Enable GPU backend targets" OFF)
@@ -888,7 +874,7 @@ Milestone 1 默认仍使用 Eigen `SimplicialLDLT`，直到 solver policy 文件
 
 **执行策略:** Phase 1 不要一口气把 geometry 和 DOF 全塞进去。先做 `base/`、`math/`、`storage/`、`geometry/` 的最小可编译/可测试闭环，跑通 `test_rest_mesh`；然后再进入 DOF/reduced map。这样如果后续出错，问题会落在很小的边界里。
 
-**测试目录和命名空间规范:** `tests/` 下的测试源文件目录要和主代码模块对齐，不把所有测试平铺在 `tests/` 根目录。比如 `include/pgo/math/...` 对应 `tests/math/...`，`include/pgo/geometry/...` 对应 `tests/geometry/...`。C++ 测试文件里的 `TEST`/helper 放在对应模块的 `pgo::<module>::test` 命名空间中。例如 base 测试使用 `namespace pgo::base::test`，math backend 测试使用 `namespace pgo::math::test`，geometry 测试使用 `namespace pgo::geometry::test`。纯 C API 测试 `tests/pgo_c/test_c_api.c` 不适用这个 C++ namespace 规范。
+**测试目录和命名空间规范:** `tests/` 下的测试源文件目录要和主代码模块对齐，不把所有测试平铺在 `tests/` 根目录。比如 `include/pgo/math/...` 对应 `tests/math/...`，`include/pgo/geometry/...` 对应 `tests/geometry/...`。C++ 测试文件里的 `TEST`/helper 放在对应模块的 `pgo::<module>::test` 命名空间中。例如 base 测试使用 `namespace pgo::base::test`，math backend 测试使用 `namespace pgo::math::test`，geometry 测试使用 `namespace pgo::geometry::test`。纯 C API 测试由 `plan/c_py_api.md` 独立定义，不进入 Milestone 1 测试命名空间规则。
 
 ### Task 1.1: 添加基础 assert
 
@@ -899,7 +885,7 @@ Milestone 1 默认仍使用 Eigen `SimplicialLDLT`，直到 solver policy 文件
 
 - [x] **Step 1: 实现 `pgo::base::require`**
 
-`require(condition, message)` 在 condition 为 false 时抛出 `std::runtime_error`。这是 C++ core 内部使用的错误机制，不能越过 C API 边界。
+`require(condition, message)` 在 condition 为 false 时抛出 `std::runtime_error`。这是 C++ core 内部使用的错误机制，后续 C/Python API bridge 必须在 ABI 边界捕获并转换为结构化错误。
 
 如果当前已有根目录平铺的 base assert 测试文件，将它整理到 `tests/base/test_assert.cpp`，并使用 `namespace pgo::base::test`。
 
@@ -2774,7 +2760,7 @@ ctest --preset debug -R "Inertial|BackwardEuler|solver"
 
 ## Phase 4.6: `pgo::log` Facade
 
-**当前状态:** Tasks 4.6.1–4.6.5 已完成。core log facade（level/sink/logger/null_sink/stderr_sink/registry）、CMake target（`pgo::log`）、基础 log 测试、spdlog optional sink 及测试已落地。Task 4.6.6 example/tool logging 已完成。C API bridge logging 明确并入 Phase 6，不提前创建空 C API。Task 4.6.7 边界检查已完成（core numerical headers 无 log include，CI 包含 log 测试）。
+**当前状态:** Tasks 4.6.1–4.6.5 已完成。core log facade（level/sink/logger/null_sink/stderr_sink/registry）、CMake target（`pgo::log`）、基础 log 测试、spdlog optional sink 及测试已落地。Task 4.6.6 example/tool logging 已完成。API bridge logging 已拆分到 `plan/c_py_api.md`，不在 Milestone 1 提前创建空 C API。Task 4.6.7 边界检查已完成（core numerical headers 无 log include，CI 包含 log 测试）。
 
 **Phase 4.6 目标:** 实现一个轻量 logging facade：
 
@@ -2789,8 +2775,8 @@ Sink     = backend 抽象，负责真正输出
 - `pgo::core` 不 link `pgo::log`。
 - `pgo::log` 默认不依赖 spdlog。
 - spdlog 是 optional backend，仅在 `PGO_ENABLE_SPDLOG=ON` 时启用。
-- C API public header 不暴露 logging 类型；C API bridge 内部可以使用 `pgo::log`。
-- examples/tools/C API bridge 可以使用 `pgo::log`；`include/pgo/base`、`math`、`storage`、`geometry`、`dof`、`assembly`、`energy`、`solver`、`integrator` 不 include `pgo/log`。
+- C/Python API public headers 不暴露 logging 类型；API bridge 内部可以使用 `pgo::log`。
+- examples/tools 和后续 API bridge 可以使用 `pgo::log`；`include/pgo/base`、`math`、`storage`、`geometry`、`dof`、`assembly`、`energy`、`solver`、`integrator` 不 include `pgo/log`。
 - `Logger` 第一版不做 template formatter，只接收 `std::string_view`；调用侧需要格式化时使用 `<format>`。
 - `Registry` 不缓存 named logger；`get(name)` 每次返回一个 lightweight `Logger` value（shared_ptr + string）。在 hot loop 中建议 capture 后重用，避免重复调用 `get()`。
 - `Logger` 持有 name、shared sink 和 immutable `Level m_threshold`。threshold 在 Logger 构造时拷入，之后不可变，彻底消除 data race。`Registry` 同时持有 Sink 和默认 Level；`get(name)` 继承默认 Level，`get(name, level)` 可显式覆盖。`set_level()` 只影响后续创建的 Logger，不影响已有 Logger。
@@ -3532,15 +3518,14 @@ ctest --preset debug-all -R "Spdlog|Log|Registry|NullSink"
 
 期望：spdlog-enabled log tests 全部通过。
 
-### Task 4.6.6: 在 example/tool/C API bridge 中使用
+### Task 4.6.6: 在 example/tool/API bridge 中使用
 
 **文件:**
 - 修改: `examples/CMakeLists.txt`
 - 修改: `examples/mass_spring_cloth.cpp`
 - 修改: `tools/CMakeLists.txt`
 - 修改: `tools/obj_frames_to_abc.cpp`
-- 修改: `src/c_api/CMakeLists.txt`（Phase 6 创建后）
-- 修改: `src/c_api/pgo_c.cpp`（Phase 6 创建后）
+- 修改: `plan/c_py_api.md` 对应的 API bridge 实现文件（独立计划中创建）
 
 - [x] **Step 1: example 链接 `pgo::log`**
 
@@ -3600,9 +3585,9 @@ auto log = pgo::log::get("pgo.tool.obj_frames_to_abc");
 log.info(std::format("frames={}, fps={}, output={}", frames.size(), fps, output.string()));
 ```
 
-- [ ] **Step 4: C API bridge 内部使用 logging（并入 Phase 6）**
+- [ ] **Step 4: API bridge 内部使用 logging（并入 `plan/c_py_api.md`）**
 
-Phase 6 创建 `src/c_api/pgo_c.cpp` 后，可以在 catch block 中使用：
+`plan/c_py_api.md` 创建 C API bridge 后，可以在 catch block 中使用：
 
 ```cpp
 auto log = pgo::log::get("pgo.c_api");
@@ -3611,7 +3596,7 @@ log.error(std::format("pgo_world_create_mass_spring failed: {}", e.what()));
 
 要求：
 
-- `include/pgo_c/pgo.h` 不 include `pgo/log`。
+- C public header 不 include `pgo/log`。
 - C ABI 仍然只通过 `pgo_status_t` + `pgo_error_t` 返回错误。
 - shared library exported symbols 仍然只暴露 `pgo_*` C API。
 
@@ -3661,7 +3646,7 @@ ctest --preset debug -R "Log|Registry|NullSink"
 ## Logging
 
 `pgo::log` is a lightweight facade for application boundaries: examples, tools,
-and the C API bridge. The numerical core does not link to logging and reports
+and future API bridges. The numerical core does not link to logging and reports
 structured status instead. spdlog is optional and only enabled with
 `PGO_ENABLE_SPDLOG=ON` plus the matching Conan option `enable_spdlog=True`.
 ```
@@ -3670,7 +3655,7 @@ structured status instead. spdlog is optional and only enabled with
 
 **当前状态:** Task 5.1 已完成（`ConstantForceEnergy` + `status_name`）。Task 5.2-5.4 待实现。Phase 4.6 完成后，example 输出统一使用 `pgo::log`。
 
-**Phase 5 目标:** 把 Phase 0-4 的架构用一个可视化 example 压一遍。Phase 5 应该消费现有 core/integrator，不新增 simulation world、runtime polymorphism、material system、bending/collision/contact 或 GPU path。允许新增的 core 组件仅限后续 Phase 6/C API 也会复用的小型 full energy / status helper。
+**Phase 5 目标:** 把 Phase 0-4 的架构用一个可视化 example 压一遍。Phase 5 应该消费现有 core/integrator，不新增 simulation world、runtime polymorphism、material system、bending/collision/contact 或 GPU path。允许新增的 core 组件仅限后续 `plan/c_py_api.md` 也会复用的小型 full energy / status helper。
 
 目标 pipeline：
 
@@ -3710,7 +3695,7 @@ hessian = 0
 - force vector size 必须等于 full displacement DOF count。
 - Non-owning：存储 `const DVec<T>*` 指向外部 force vector。
 - 该 energy 不依赖 mesh、不知道 gravity、不知道 examples。
-- Phase 5 用它表达 gravity；Phase 6 的 C API `gravity_scale` 也可以复用它。
+- Phase 5 用它表达 gravity；`plan/c_py_api.md` 的 C/Python API 也可以复用它。
 - Gravity 组装与 `ConstantForceEnergy` 解耦：example 层通过 free function `make_gravity_force(lumped_mass, g) -> DVec<T>` 将 per-vertex lumped mass 和 3D gravity vector 展开为 per-DOF force vector，再传入 `ConstantForceEnergy`。不引入继承关系或 `GravityForceEnergy` 子类。
 
 - [x] **Step 2: 添加 `solver::status_name(...)`**
@@ -3867,202 +3852,17 @@ cmake --build --preset debug --target pgo_obj_frames_to_abc
 期望：写出 `output/example/bunny.abc`，并打印 frame、vertex、face、fps、output summary。
 
 
-## Phase 6: C99 ABI 动态库桥接层
+## Phase 6: C99 / Python API 独立计划
 
-### Task 6.1: 添加 C API 导出宏和 public header
-
-**文件:**
-- 创建: `include/pgo_c/export.h`
-- 创建: `include/pgo_c/pgo.h`
-
-- [ ] **Step 1: 创建 `include/pgo_c/export.h`**
-
-```c
-#ifndef PGO_C_EXPORT_H
-#define PGO_C_EXPORT_H
-
-#if defined(_WIN32)
-#  if defined(PGO_C_BUILDING_LIBRARY)
-#    define PGO_C_API __declspec(dllexport)
-#  else
-#    define PGO_C_API __declspec(dllimport)
-#  endif
-#else
-#  define PGO_C_API __attribute__((visibility("default")))
-#endif
-
-#endif /* PGO_C_EXPORT_H */
-```
-
-- [ ] **Step 2: 创建 `include/pgo_c/pgo.h`**
-
-要求：
-
-- 必须是 C99-compatible。
-- 不 include C++/Eigen/STL headers。
-- 使用 `extern "C"` guard。
-- 所有 handle 都 opaque。
-- 所有 descriptor 都有 `size` 和 `version`。
-
-最小 API：
-
-```c
-typedef struct pgo_world_t pgo_world_t;
-
-PGO_C_API uint32_t pgo_api_version(void);
-PGO_C_API void pgo_error_clear(pgo_error_t* error);
-PGO_C_API const char* pgo_status_name(pgo_status_t status);
-
-PGO_C_API pgo_status_t pgo_world_create_mass_spring(const pgo_mesh_desc_t* mesh_desc,
-                                                    const pgo_mass_spring_desc_t* sim_desc,
-                                                    pgo_world_t** out_world,
-                                                    pgo_error_t* error);
-
-PGO_C_API void pgo_world_destroy(pgo_world_t* world);
-PGO_C_API pgo_status_t pgo_world_fix_vertex(pgo_world_t* world, uint32_t vertex, pgo_error_t* error);
-PGO_C_API pgo_status_t pgo_world_solve_static(pgo_world_t* world, double gravity_scale, pgo_error_t* error);
-PGO_C_API pgo_status_t pgo_world_copy_displacements(const pgo_world_t* world,
-                                                    double* out_displacements,
-                                                    size_t displacement_count,
-                                                    pgo_error_t* error);
-```
-
-
-### Task 6.2: 添加 C API shared library target
-
-**文件:**
-- 创建: `src/c_api/CMakeLists.txt`
-- 创建: `src/c_api/pgo_c.cpp`
-
-- [ ] **Step 1: 创建 `src/c_api/CMakeLists.txt`**
-
-```cmake
-add_library(pgo_c SHARED pgo_c.cpp)
-add_library(pgo::c ALIAS pgo_c)
-
-target_compile_features(pgo_c PRIVATE cxx_std_23)
-target_link_libraries(pgo_c PRIVATE pgo::core)
-target_include_directories(pgo_c PUBLIC
-    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>
-)
-target_compile_definitions(pgo_c PRIVATE PGO_C_BUILDING_LIBRARY)
-
-set_target_properties(pgo_c PROPERTIES
-    OUTPUT_NAME pgo
-    CXX_VISIBILITY_PRESET hidden
-    VISIBILITY_INLINES_HIDDEN ON
-)
-
-if(APPLE)
-    set_target_properties(pgo_c PROPERTIES INSTALL_NAME_DIR "@rpath")
-elseif(UNIX)
-    set_target_properties(pgo_c PROPERTIES INSTALL_RPATH "$ORIGIN")
-endif()
-```
-
-- [ ] **Step 2: 创建可构建 stub `src/c_api/pgo_c.cpp`**
-
-stub 只保证 target 立刻可构建。Task 6.3 会替换为真实 bridge。
-
-要求：
-
-- include `pgo_c/pgo.h`。
-- 实现 `pgo_api_version`、`pgo_error_clear`、`pgo_status_name`。
-- 其他 API 返回 `PGO_STATUS_INTERNAL_ERROR`，并写入错误消息 `"pgo C API stub called before bridge task completed"`。
-- 每个 exported function 使用 `extern "C" PGO_C_API`。
-
-- [ ] **Step 3: 构建 C API target**
-
-```bash
-cmake --preset debug
-cmake --build --preset debug --target pgo_c
-```
-
-期望：生成 `libpgo.dylib`、`libpgo.so` 或 `pgo.dll`。
-
-
-### Task 6.3: 实现 C++ bridge，不暴露 C++ ABI
-
-**文件:**
-- 修改: `src/c_api/pgo_c.cpp`
-
-- [ ] **Step 1: 实现真实 bridge**
-
-规则：
-
-- `pgo_c/pgo.h` 必须第一个 include。
-- `struct pgo_world_t` 只定义在 `.cpp` 内。
-- `pgo_world_t` 内部可以用 `std::unique_ptr`、`std::variant` 等 RAII 类型。
-- Milestone 1 只支持 `PGO_SCALAR_FLOAT64` 与 `PGO_DIM_2`/`PGO_DIM_3`。
-- descriptor 校验使用 `desc->size >= sizeof(desc_type)` 和 `desc->version == PGO_C_API_VERSION`。
-- exported C function 边界必须 catch `std::exception` 和 `catch (...)`。
-- 不返回临时 `std::string` 的 `c_str()`。
-- 错误信息写入 caller-provided `pgo_error_t::message` 固定数组。
-
-内部可显式实例化或分派到：
+Milestone 1 的 C99 ABI facade 已拆分到独立计划：
 
 ```text
-MassSpringWorld<double, 2>
-MassSpringWorld<double, 3>
+plan/c_py_api.md
 ```
 
-这些 C++ 类型不得出现在 `include/pgo_c/pgo.h`。
+Milestone 1 core、IO、logging、example pipeline 仍然需要保持 C/Python API 友好的边界：core 不暴露 STL/Eigen/template 类型到二进制接口，C++ exceptions 不跨 ABI 边界，`include/pgo_c` 和 Python package 不进入 `include/pgo/core`。
 
-- [ ] **Step 2: 构建 C API target**
-
-```bash
-cmake --preset debug
-cmake --build --preset debug --target pgo_c
-```
-
-
-### Task 6.4: 添加纯 C API smoke test
-
-**文件:**
-- 创建: `tests/pgo_c/test_c_api.c`
-- 修改: `tests/CMakeLists.txt`
-
-- [ ] **Step 1: 创建 `tests/pgo_c/test_c_api.c`**
-
-要求：
-
-- 文件用 C 编译，不是 C++。
-- include `pgo_c/pgo.h`。
-- 检查 `pgo_api_version() == PGO_C_API_VERSION`。
-- 构造两点一边的 3D mesh descriptor。
-- 调用 `pgo_world_create_mass_spring`。
-- 调用 `pgo_world_fix_vertex(world, 0)`。
-- 调用 `pgo_world_destroy(world)`。
-
-- [ ] **Step 2: 修改 `tests/CMakeLists.txt`**
-
-追加：
-
-```cmake
-if(TARGET pgo::c)
-    add_executable(pgo_c_api_tests pgo_c/test_c_api.c)
-    target_link_libraries(pgo_c_api_tests PRIVATE pgo::c)
-    add_test(NAME pgo_c_api_tests COMMAND pgo_c_api_tests)
-endif()
-```
-
-- [ ] **Step 3: 运行 C API 测试**
-
-```bash
-cmake --build --preset debug --target pgo_c_api_tests
-ctest --preset debug -R pgo_c_api_tests
-```
-
-- [ ] **Step 4: 检查 exported symbols**
-
-macOS/Linux:
-
-```bash
-nm -gU build/debug/src/c_api/libpgo.dylib 2>/dev/null || nm -D --defined-only build/debug/src/c_api/libpgo.so
-```
-
-期望：只导出 `pgo_*` C API symbols，不导出 C++ template internals。
+执行顺序建议：先完成 Phase 5 的 reusable force/status helpers 和 example pipeline，再按 `plan/c_py_api.md` 实现 C99 ABI、nanobind Python API、wheel packaging 和发布变体。
 
 
 ## Phase 7: CI 和验证
@@ -4136,7 +3936,7 @@ GPU-aware C++23 PGO learning and refactoring project.
 
 Milestone 1 builds a CPU mass-spring solver around explicit rest positions `X`,
 displacement unknowns `u`, local energy assembly, Newton solving, OBJ frame output,
-and a C99 dynamic-library API.
+and clean boundaries for the separate C/Python API plan.
 
 ## Local Build
 
@@ -4161,7 +3961,7 @@ ctest --preset debug
 ````
 
 
-## Phase 8: GPU-Awareness 和 ABI Review Gate
+## Phase 8: GPU-Awareness 和 Core Boundary Review Gate
 
 ### Task 8.1: 检查 GPU-aware 约束
 
@@ -4205,56 +4005,48 @@ or contact candidate while reusing the same semantic model.
 ```
 
 
-### Task 8.2: 检查 C ABI 边界
+### Task 8.2: 检查 C/Python API readiness 边界
 
 **文件:**
 - 修改: `README.md`
 
-- [ ] **Step 1: 检查 public C header 不泄漏 C++**
+- [ ] **Step 1: 检查 core public headers 不依赖 API layer**
 
 ```bash
-rg "std::|Eigen::|template|class|namespace|#include <vector>|#include <string>" include/pgo_c
+rg 'pgo_c/|nanobind|Python\\.h|numpy' include/pgo src examples tests
 ```
 
-期望：public C headers 无匹配。
+期望：无匹配；Milestone 1 core、IO、log、examples/tests 不依赖 C/Python API package。
 
-- [ ] **Step 2: 检查 C API 实现 catch exceptions**
-
-```bash
-rg "catch \\(const std::exception&|catch \\(\\.\\.\\.\\)" src/c_api/pgo_c.cpp
-```
-
-期望：每个会调用 C++ core 的 exported function 都有 exception handling。
-
-- [ ] **Step 3: 检查 exported symbols**
-
-```bash
-nm -gU build/debug/src/c_api/libpgo.dylib 2>/dev/null || nm -D --defined-only build/debug/src/c_api/libpgo.so
-```
-
-期望：只导出 `pgo_*` API functions 和平台 runtime symbols。
-
-- [ ] **Step 4: README 记录 ABI 边界**
+- [ ] **Step 2: README 记录 API 分层**
 
 添加：
 
 ```markdown
-## C ABI Boundary
+## C And Python API Plan
 
-The template C++ core is not the binary interface. The shared library exposes only
-a C99 ABI in `include/pgo_c/pgo.h`: opaque handles, POD descriptors, pointer/count
-arrays, explicit destroy functions, and status/error returns. C++ exceptions,
-STL types, Eigen types, and template types do not cross this boundary.
+The C99 shared-library ABI and nanobind Python package are tracked separately in
+`plan/c_py_api.md`. Milestone 1 keeps the simulation core API-friendly by avoiding
+STL/Eigen/template objects as binary interfaces and by keeping Python/nanobind out
+of `pgo::core`.
 ```
 
+- [ ] **Step 3: 确认独立 API plan 存在**
+
+```bash
+test -f plan/c_py_api.md
+rg "C99 And Python API Implementation Plan|nanobind|pgo_world_t|release-accel-all" plan/c_py_api.md
+```
+
+期望：`plan/c_py_api.md` 存在，并记录 C99 ABI、nanobind Python API、package variants。
 
 ## Phase 9: Breaking Core Header Layout Refactor
 
-**当前状态:** 待实现。这个 phase 是 Milestone 1 的最后整理步骤，发生在 Phase 8 GPU-awareness / ABI review gate 之后、进入 Milestone 2 之前。
+**当前状态:** 待实现。这个 phase 是 Milestone 1 的最后整理步骤，发生在 Phase 8 GPU-awareness / core boundary review gate 之后、进入 Milestone 2 之前。
 
-**Phase 9 目标:** 将 numerical/simulation core 的 public headers 统一迁移到 `include/pgo/core/...`，让 `io`、`log`、`pgo_c` 和 core 的边界在文件系统层面也清晰可见。
+**Phase 9 目标:** 将 numerical/simulation core 的 public headers 统一迁移到 `include/pgo/core/...`，让 `io`、`log` 和 core 的边界在文件系统层面也清晰可见。C/Python API headers 由 `plan/c_py_api.md` 单独负责。
 
-**Breaking-change 决策:** 不创建 compatibility headers。旧路径如 `pgo/energy/reduced_energy.hpp`、`pgo/solver/newton_solver.hpp`、`pgo/geometry/rest_mesh.hpp` 在 Phase 9 后直接不存在；所有 repo 内部 include、examples、tests、tools、C API bridge 一次性迁移到 `pgo/core/...`。
+**Breaking-change 决策:** 不创建 compatibility headers。旧路径如 `pgo/energy/reduced_energy.hpp`、`pgo/solver/newton_solver.hpp`、`pgo/geometry/rest_mesh.hpp` 在 Phase 9 后直接不存在；所有 repo 内部 include、examples、tests、tools 一次性迁移到 `pgo/core/...`。
 
 最终 public include layout：
 
@@ -4269,12 +4061,9 @@ include/pgo/
     integrator/
     math/
     solver/
-    storage/
+  storage/
   io/
   log/
-include/pgo_c/
-  export.h
-  pgo.h
 ```
 
 设计约束：
@@ -4282,7 +4071,7 @@ include/pgo_c/
 - `pgo::core` CMake target 名称保持不变；变化的是 header path，不是 C++ namespace。
 - C++ namespace 仍使用现有 `pgo::math`、`pgo::energy`、`pgo::solver` 等，不额外包一层 `pgo::core` namespace。
 - `include/pgo/io` 和 `include/pgo/log` 保持在 `include/pgo/` 下，不进入 core。
-- `include/pgo_c` 保持 C ABI public header 根目录，不进入 `include/pgo/core`。
+- `plan/c_py_api.md` 后续创建的 `include/pgo_c` 保持 C ABI public header 根目录，不进入 `include/pgo/core`。
 - 不留下旧路径 forwarding headers，避免虚假的双入口 API。
 
 ### Task 9.1: 移动 core headers
@@ -4371,7 +4160,7 @@ test ! -d include/pgo/integrator
 #include "pgo/core/integrator/
 ```
 
-要求：`pgo/io/...`、`pgo/log/...`、`pgo_c/...` include 不改。
+要求：`pgo/io/...`、`pgo/log/...` include 不改。若 `plan/c_py_api.md` 已经落地，`pgo_c/...` include 由该独立计划维护，本 phase 只迁移 core include。
 
 - [ ] **Step 2: 检查旧 core include 不再出现**
 
@@ -4405,9 +4194,10 @@ README 中记录：
 ## Header Layout
 
 Numerical and simulation headers live under `include/pgo/core/`. Boundary modules
-remain outside core: `include/pgo/io/`, `include/pgo/log/`, and `include/pgo_c/`.
+remain outside core: `include/pgo/io/` and `include/pgo/log/`.
 Milestone 1 intentionally made this as a breaking include-path change and does
-not provide compatibility forwarding headers.
+not provide compatibility forwarding headers. The C/Python API boundary is tracked
+separately in `plan/c_py_api.md`.
 ```
 
 - [ ] **Step 2: 更新 plan 中的 path checks**
@@ -4428,7 +4218,7 @@ include/pgo/core/energy include/pgo/core/assembly
 include/pgo/core/base include/pgo/core/math ...
 ```
 
-`include/pgo/io`、`include/pgo/log`、`include/pgo_c` 保持原路径。
+`include/pgo/io`、`include/pgo/log` 保持原路径；`include/pgo_c` 如已存在则由 `plan/c_py_api.md` 单独维护。
 
 - [ ] **Step 3: 检查文档中没有旧 public include path 示例**
 
@@ -4509,9 +4299,7 @@ cmake --build --preset debug --target pgo_mass_spring_cloth
 - Energy model/provider 暴露 local contribution API，适合 CPU assembly 和未来 GPU dispatch。
 - `pgo::log` facade 默认无 spdlog 依赖，`pgo_log_tests` 通过；`pgo::core` 不 link `pgo::log`。
 - `PGO_ENABLE_SPDLOG=ON` 且 Conan `enable_spdlog=True` 时，`SpdlogSink` 可构建并通过 smoke test。
-- `pgo_c` 构建为 shared library，并通过 selected concrete C++ template instantiations 暴露 C99 ABI。
-- `include/pgo_c/pgo.h` 能作为 C 编译，不暴露 STL、Eigen、C++ templates、exceptions、namespaces 或 C++ classes。
-- C API ownership/error 规则明确：handles 由 matching destroy functions 释放，descriptors 是 borrowed，错误通过 `pgo_status_t` + `pgo_error_t` 返回。
+- C/Python API 的 C99 ABI、nanobind package、symbol export 和 wheel packaging 已拆分到 `plan/c_py_api.md`，不阻塞 Milestone 1 core 完成标准。
 - Core headers 位于 `include/pgo/core/...`；`include/pgo/base`、`math`、`storage`、`geometry`、`dof`、`assembly`、`energy`、`solver`、`integrator` 这些旧路径不存在。
 - Repo 内部不再 include 旧 core paths；不提供 compatibility forwarding headers。
 - `PGO_ENABLE_EIGEN_ACCELERATION=OFF` 默认构建通过；打开后 Apple 可走 Accelerate，Ubuntu/Windows 可在 oneMKL 可用时走 MKL。
@@ -4527,16 +4315,16 @@ cmake --build --preset debug --target pgo_mass_spring_cloth
 4. 完成 Phase 2，尽早获得可视化输出能力。
 5. 完成 Phase 3，用 derivative tests 保护 energy 实现。
 6. 完成 Phase 4，先用 quadratic system 验证 solver，再跑 mass-spring。
-7. 完成 Phase 4.6，补上 `pgo::log` facade，让 Phase 5 example/tool 和 Phase 6 C API bridge 使用统一日志边界。
+7. 完成 Phase 4.6，补上 `pgo::log` facade，让 Phase 5 example/tool 和后续 API bridge 使用统一日志边界。
 8. 完成 Phase 5，生成 OBJ frames。
-9. 完成 Phase 6，暴露稳定的 C99 shared-library facade。
-10. 完成 Phase 7 和 Phase 8，收紧 CI、GPU-aware 和 ABI review gate。
+9. 完成 Phase 6，确认 C/Python API 已由 `plan/c_py_api.md` 独立追踪。
+10. 完成 Phase 7 和 Phase 8，收紧 CI、GPU-aware 和 core boundary review gate。
 11. 完成 Phase 9，执行 breaking core header layout refactor，不保留旧 include compatibility headers。
 12. 完成 Milestone 1 后，再进入 Milestone 2 GPU backend。
 
 ## 自检记录
 
-- 覆盖范围：计划覆盖 build system、CI、Eigen acceleration 配置、C++23 header-oriented core、breaking core header layout、Eigen backend layer、GPU-aware storage、rest/displacement 分离、DOF reduction、OBJ input/output、local energy model/provider assembly、mass-spring energy、Newton solver、`pgo::log` facade、example frames、C99 dynamic-library API、Alembic 后处理。
-- 占位扫描：计划不包含 `TBD`、`TODO`、`implement later` 等未落实占位。
-- 类型一致性：核心名称统一使用 `RestMesh`、`DofLayout`、`Displacement`、`DirichletBoundary`、`ReducedDofMap`、`MassSpringLocalEnergyModel`、`MassSpringLocalEnergyProvider`、`ReducedEnergyView`、`ObjFrameWriter3d`、`NewtonSolver`、`pgo::log::Registry`、`pgo::log::Logger`、`pgo::log::Sink`、`pgo_world_t`、`pgo_error_t`。
+- 覆盖范围：计划覆盖 build system、CI、Eigen acceleration 配置、C++23 header-oriented core、breaking core header layout、Eigen backend layer、GPU-aware storage、rest/displacement 分离、DOF reduction、OBJ input/output、local energy model/provider assembly、mass-spring energy、Newton solver、`pgo::log` facade、example frames、C/Python API 独立计划引用、Alembic 后处理。
+- 占位扫描：计划不包含未落实占位项。
+- 类型一致性：核心名称统一使用 `RestMesh`、`DofLayout`、`Displacement`、`DirichletBoundary`、`ReducedDofMap`、`MassSpringLocalEnergyModel`、`MassSpringLocalEnergyProvider`、`ReducedEnergyView`、`ObjFrameWriter3d`、`NewtonSolver`、`pgo::log::Registry`、`pgo::log::Logger`、`pgo::log::Sink`。
 - 范围控制：Vulkan、Slang、FEM、contact、IPC、GPU solvers 不进入 Milestone 1，但数据布局和 API 边界保持兼容。

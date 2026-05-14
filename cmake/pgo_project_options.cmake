@@ -4,6 +4,7 @@ add_library(pgo::project_options ALIAS pgo_project_options)
 option(PGO_ENABLE_NATIVE_ARCH "Enable native CPU tuning flags for release builds" ON)
 
 if(PGO_ENABLE_NATIVE_ARCH)
+    message(STATUS "Enabling native CPU tuning flags for release builds")
     if(CMAKE_CXX_COMPILER_ID MATCHES "^(Apple)?Clang$" OR CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         target_compile_options(pgo_project_options INTERFACE
             $<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:C>>:-march=native>
