@@ -95,43 +95,6 @@ function(pgo_append_existing_runtime_file output_variable runtime_path)
     endif()
 endfunction()
 
-if(PGO_ENABLE_TBB)
-    set(pgo_tbb_runtime_artifact_targets TBB::tbb)
-    get_target_property(pgo_tbb_target_type TBB::tbb TYPE)
-    if(pgo_tbb_target_type STREQUAL "INTERFACE_LIBRARY")
-        if(DEFINED onetbb_TBB_tbb_LIBRARIES_TARGETS AND onetbb_TBB_tbb_LIBRARIES_TARGETS)
-            set(pgo_tbb_runtime_artifact_targets ${onetbb_TBB_tbb_LIBRARIES_TARGETS})
-        else()
-            message(FATAL_ERROR "TBB::tbb is an interface target without an installable runtime artifact target")
-        endif()
-    endif()
-
-    foreach(pgo_tbb_runtime_artifact_target IN LISTS pgo_tbb_runtime_artifact_targets)
-        string(TOUPPER "${CMAKE_BUILD_TYPE}" pgo_tbb_imported_config)
-        get_target_property(
-            pgo_tbb_runtime_artifact
-            ${pgo_tbb_runtime_artifact_target}
-            IMPORTED_LOCATION_${pgo_tbb_imported_config}
-        )
-        if(NOT pgo_tbb_runtime_artifact)
-            get_target_property(
-                pgo_tbb_runtime_artifact
-                ${pgo_tbb_runtime_artifact_target}
-                IMPORTED_LOCATION
-            )
-        endif()
-        if(NOT pgo_tbb_runtime_artifact)
-            message(FATAL_ERROR "Could not resolve runtime artifact for ${pgo_tbb_runtime_artifact_target}")
-        endif()
-
-        pgo_collect_symlink_chain(pgo_tbb_runtime_artifacts "${pgo_tbb_runtime_artifact}")
-        install(FILES ${pgo_tbb_runtime_artifacts}
-            DESTINATION pgo
-            COMPONENT python
-        )
-    endforeach()
-endif()
-
 if(PGO_SELECTED_EIGEN_ACCELERATION_BACKEND STREQUAL "MKL")
     set(pgo_mkl_runtime_roots)
     if(DEFINED ENV{MKLROOT})
