@@ -78,6 +78,24 @@ class PgoBuildWheelTest(unittest.TestCase):
         self.assertIn("--out-dir", plan.uv_build_command)
         self.assertIn("dist/pypgo-release-all", plan.uv_build_command)
 
+    def test_uv_build_uses_ninja_and_prepared_conan_toolchain(self) -> None:
+        plan = pgo_build_wheel.create_wheel_plan(
+            repo_root=REPO_ROOT,
+            preset_name="pypgo-release-all",
+            host_profile=None,
+            build_profile=None,
+            build_missing=True,
+            out_dir=None,
+            clear=False,
+            stable_abi=False,
+        )
+
+        self.assertIn("-Ccmake.args=-GNinja", plan.uv_build_command)
+        self.assertIn(
+            "-Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release-all/conan_toolchain.cmake",
+            plan.uv_build_command,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

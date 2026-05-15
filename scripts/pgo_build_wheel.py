@@ -92,6 +92,7 @@ def create_wheel_plan(
     uv_build_command.extend(
         [
             f"-Ccmake.build-type={configure_plan.build_type}",
+            "-Ccmake.args=-GNinja",
             f"-Ccmake.args=-DCMAKE_TOOLCHAIN_FILE={_relative_or_absolute(repo_root, toolchain_file)}",
         ]
     )

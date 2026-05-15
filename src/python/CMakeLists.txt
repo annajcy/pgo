@@ -95,6 +95,43 @@ function(pgo_append_existing_runtime_file output_variable runtime_path)
     endif()
 endfunction()
 
+if(PGO_ENABLE_TBB)
+    set(pgo_tbb_runtime_artifacts)
+    foreach(pgo_tbb_runtime_dir IN LISTS
+        onetbb_BIN_DIRS_RELEASE
+        onetbb_LIB_DIRS_RELEASE
+        onetbb_TBB_tbb_BIN_DIRS_RELEASE
+        onetbb_TBB_tbb_LIB_DIRS_RELEASE
+    )
+        if(WIN32)
+            file(GLOB pgo_tbb_runtime_candidates "${pgo_tbb_runtime_dir}/*.dll")
+        elseif(APPLE)
+            file(GLOB pgo_tbb_runtime_candidates "${pgo_tbb_runtime_dir}/libtbb*.dylib*")
+        elseif(UNIX)
+            file(GLOB pgo_tbb_runtime_candidates "${pgo_tbb_runtime_dir}/libtbb*.so*")
+        else()
+            set(pgo_tbb_runtime_candidates)
+        endif()
+
+        foreach(pgo_tbb_runtime_candidate IN LISTS pgo_tbb_runtime_candidates)
+            pgo_append_existing_runtime_file(
+                pgo_tbb_runtime_artifacts
+                "${pgo_tbb_runtime_candidate}"
+            )
+        endforeach()
+    endforeach()
+
+    list(REMOVE_DUPLICATES pgo_tbb_runtime_artifacts)
+    if(NOT pgo_tbb_runtime_artifacts)
+        message(FATAL_ERROR "TBB is enabled, but no TBB runtime libraries were found to bundle in the Python wheel")
+    endif()
+
+    install(FILES ${pgo_tbb_runtime_artifacts}
+        DESTINATION pgo
+        COMPONENT python
+    )
+endif()
+
 if(PGO_SELECTED_EIGEN_ACCELERATION_BACKEND STREQUAL "MKL")
     set(pgo_mkl_runtime_roots)
     if(DEFINED ENV{MKLROOT})

@@ -1,5 +1,16 @@
 include(GoogleTest)
 
+function(pgo_copy_runtime_dlls target_name)
+    if(WIN32)
+        add_custom_command(TARGET ${target_name} POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy -t
+                "$<TARGET_FILE_DIR:${target_name}>"
+                "$<TARGET_RUNTIME_DLLS:${target_name}>"
+            COMMAND_EXPAND_LISTS
+        )
+    endif()
+endfunction()
+
 add_executable(pgo_tests
     assembly/test_cpu_assembler.cpp
     base/test_assert.cpp
@@ -29,6 +40,7 @@ target_link_libraries(pgo_tests
         GTest::gtest_main
 )
 
+pgo_copy_runtime_dlls(pgo_tests)
 gtest_discover_tests(pgo_tests)
 
 add_executable(pgo_log_tests
@@ -41,6 +53,7 @@ target_link_libraries(pgo_log_tests
         GTest::gtest_main
 )
 
+pgo_copy_runtime_dlls(pgo_log_tests)
 gtest_discover_tests(pgo_log_tests)
 
 if(PGO_ENABLE_SPDLOG)
@@ -54,6 +67,7 @@ if(PGO_ENABLE_SPDLOG)
             GTest::gtest_main
     )
 
+    pgo_copy_runtime_dlls(pgo_spdlog_tests)
     gtest_discover_tests(pgo_spdlog_tests)
 endif()
 

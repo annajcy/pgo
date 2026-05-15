@@ -25,10 +25,24 @@ class CMakeConfigTest(unittest.TestCase):
         self.assertIn("libmkl_core.so.2", content)
         self.assertIn("libiomp5", content)
 
+    def test_python_wheel_installs_tbb_runtime_artifacts(self) -> None:
+        content = (REPO_ROOT / "src/python/CMakeLists.txt").read_text(encoding="utf-8")
+
+        self.assertIn("pgo_tbb_runtime_artifacts", content)
+        self.assertIn("libtbb*.dylib*", content)
+        self.assertIn("*.dll", content)
+        self.assertIn("COMPONENT python", content)
+
     def test_python_package_adds_wheel_directory_to_windows_dll_search_path(self) -> None:
         content = (REPO_ROOT / "python/pgo/__init__.py").read_text(encoding="utf-8")
 
         self.assertIn("os.add_dll_directory", content)
+
+    def test_windows_gtest_targets_copy_runtime_dlls_before_discovery(self) -> None:
+        content = (REPO_ROOT / "tests/CMakeLists.txt").read_text(encoding="utf-8")
+
+        self.assertIn("$<TARGET_RUNTIME_DLLS:${target_name}>", content)
+        self.assertIn("pgo_copy_runtime_dlls(pgo_tests)", content)
 
 
 if __name__ == "__main__":
