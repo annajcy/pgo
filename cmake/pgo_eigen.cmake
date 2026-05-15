@@ -63,20 +63,33 @@ if(PGO_SELECTED_EIGEN_ACCELERATION_BACKEND STREQUAL "MKL")
         endforeach()
     endif()
 
-    find_package(MKL CONFIG REQUIRED)
-
-    target_compile_definitions(pgo_eigen_config INTERFACE
-        EIGEN_USE_MKL_ALL
-        PGO_EIGEN_ACCELERATION_MKL
-    )
-
-    if(PGO_EIGEN_MKL_NO_DIRECT_CALL)
-        target_compile_definitions(pgo_eigen_config INTERFACE
-            EIGEN_MKL_NO_DIRECT_CALL
-        )
+    if(PGO_EIGEN_ACCELERATION_BACKEND STREQUAL "AUTO")
+        find_package(MKL CONFIG QUIET)
+        if(NOT MKL_FOUND)
+            set(PGO_SELECTED_EIGEN_ACCELERATION_BACKEND "NONE")
+        endif()
+    else()
+        find_package(MKL CONFIG REQUIRED)
     endif()
 
-    target_link_libraries(pgo_eigen_config INTERFACE MKL::MKL)
+    if(MKL_FOUND)
+        target_compile_definitions(pgo_eigen_config INTERFACE
+            EIGEN_USE_MKL_ALL
+            PGO_EIGEN_ACCELERATION_MKL
+        )
+
+        if(PGO_EIGEN_MKL_NO_DIRECT_CALL)
+            target_compile_definitions(pgo_eigen_config INTERFACE
+                EIGEN_MKL_NO_DIRECT_CALL
+            )
+        endif()
+
+        target_link_libraries(pgo_eigen_config INTERFACE MKL::MKL)
+    else()
+        target_compile_definitions(pgo_eigen_config INTERFACE
+            PGO_EIGEN_ACCELERATION_NONE
+        )
+    endif()
 elseif(PGO_SELECTED_EIGEN_ACCELERATION_BACKEND STREQUAL "ACCELERATE")
     if(NOT APPLE)
         message(FATAL_ERROR "PGO_EIGEN_ACCELERATION_BACKEND=ACCELERATE is only supported on Apple platforms.")

@@ -8,7 +8,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import tomllib
 import zipfile
 from dataclasses import dataclass
 from email.parser import Parser
@@ -17,33 +16,18 @@ from typing import Optional
 import pgo_configure
 
 
-@dataclass(frozen=True)
-class ReleaseVariant:
-    name: str
-    preset: str
-    distribution: str
+DEFAULT_PRESET = "pypgo-release-all"
+PUBLISH_DISTRIBUTION = "pgo"
 
 
 @dataclass(frozen=True)
 class ReleasePlan:
-    variant: ReleaseVariant
+    preset: str
+    distribution: str
     source_tree: pathlib.Path
     out_dir: pathlib.Path
     inner_command: list[str]
-
-
-VARIANTS: dict[str, ReleaseVariant] = {
-    "default": ReleaseVariant(
-        name="default",
-        preset="pypgo-release-all",
-        distribution="pgo",
-    ),
-    "accel": ReleaseVariant(
-        name="accel",
-        preset="pypgo-release-accel-all",
-        distribution="pgo-accel",
-    ),
-}
+    install: bool
 
 COPY_IGNORE = shutil.ignore_patterns(
     ".git",
@@ -60,43 +44,6 @@ COPY_IGNORE = shutil.ignore_patterns(
 )
 
 
-def apply_distribution_name(pyproject_path: pathlib.Path, distribution: str) -> None:
-    original = pyproject_path.read_text(encoding="utf-8")
-    data = tomllib.loads(original)
-    if data.get("project", {}).get("name") is None:
-        raise ValueError(f"{pyproject_path} does not define [project].name")
-
-    lines = original.splitlines(keepends=True)
-    in_project = False
-    changed = False
-    for index, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped == "[project]":
-            in_project = True
-            continue
-        if in_project and stripped.startswith("[") and stripped.endswith("]"):
-            break
-        if in_project and stripped.startswith("name"):
-            prefix = line[: len(line) - len(line.lstrip())]
-            newline = "\n" if line.endswith("\n") else ""
-            lines[index] = f'{prefix}name = "{distribution}"{newline}'
-            changed = True
-            break
-
-    if not changed:
-        raise ValueError(f"{pyproject_path} does not have a replaceable [project].name")
-
-    pyproject_path.write_text("".join(lines), encoding="utf-8")
-    patched = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
-    if patched["project"]["name"] != distribution:
-        raise ValueError(f"failed to patch [project].name to {distribution}")
-
-
-def apply_variant_metadata(pyproject_path: pathlib.Path, variant: ReleaseVariant) -> None:
-    if variant.distribution != "pgo":
-        apply_distribution_name(pyproject_path, variant.distribution)
-
-
 def copy_source_tree(repo_root: pathlib.Path, source_tree: pathlib.Path) -> None:
     shutil.copytree(repo_root, source_tree, ignore=COPY_IGNORE)
 
@@ -104,32 +51,28 @@ def copy_source_tree(repo_root: pathlib.Path, source_tree: pathlib.Path) -> None
 def create_release_plan(
     *,
     repo_root: pathlib.Path,
-    variant_name: str,
+    preset_name: str,
     source_tree: pathlib.Path,
     out_root: Optional[pathlib.Path],
     clear: bool,
     stable_abi: bool,
+    install: bool,
     host_profile: Optional[pathlib.Path] = None,
     build_profile: Optional[pathlib.Path] = None,
 ) -> ReleasePlan:
-    try:
-        variant = VARIANTS[variant_name]
-    except KeyError as error:
-        raise ValueError(f"unknown release variant: {variant_name}") from error
-
     if out_root is None:
         resolved_out_root = repo_root / "dist"
     elif out_root.is_absolute():
         resolved_out_root = out_root
     else:
         resolved_out_root = repo_root / out_root
-    out_dir = resolved_out_root / variant.distribution
+    out_dir = resolved_out_root / PUBLISH_DISTRIBUTION
     inner_command = [
         "uv",
         "run",
         "python",
         "scripts/pgo_build_wheel.py",
-        variant.preset,
+        preset_name,
         "--out-dir",
         str(out_dir),
     ]
@@ -143,10 +86,12 @@ def create_release_plan(
         inner_command.append("--stable-abi")
 
     return ReleasePlan(
-        variant=variant,
+        preset=preset_name,
+        distribution=PUBLISH_DISTRIBUTION,
         source_tree=source_tree,
         out_dir=out_dir,
         inner_command=inner_command,
+        install=install,
     )
 
 
@@ -169,9 +114,12 @@ def verify_wheel_metadata(wheel_path: pathlib.Path, distribution: str) -> None:
             raise ValueError(f"{wheel_path} does not contain the pgo import package")
 
 
+def create_install_command(_plan: ReleasePlan, wheel_path: pathlib.Path) -> list[str]:
+    return ["uv", "pip", "install", str(wheel_path)]
+
+
 def run_release_plan(plan: ReleasePlan, repo_root: pathlib.Path) -> None:
     copy_source_tree(repo_root, plan.source_tree)
-    apply_variant_metadata(plan.source_tree / "pyproject.toml", plan.variant)
 
     before = set(find_built_wheels(plan.out_dir))
     pgo_configure.run_command(plan.inner_command, plan.source_tree)
@@ -181,24 +129,20 @@ def run_release_plan(plan: ReleasePlan, repo_root: pathlib.Path) -> None:
     if not wheels_to_check:
         raise ValueError(f"no wheel was written to {plan.out_dir}")
     for wheel_path in wheels_to_check:
-        verify_wheel_metadata(wheel_path, plan.variant.distribution)
+        verify_wheel_metadata(wheel_path, plan.distribution)
+    if plan.install:
+        pgo_configure.run_command(create_install_command(plan, wheels_to_check[-1]), repo_root)
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Build release wheel distributions from temporary source trees."
     )
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument(
-        "--variant",
-        choices=sorted(VARIANTS),
-        help="Release wheel variant to build",
-    )
-    group.add_argument(
-        "--all",
-        dest="all_variants",
-        action="store_true",
-        help="Build all release wheel variants",
+    parser.add_argument(
+        "preset",
+        nargs="?",
+        default=DEFAULT_PRESET,
+        help=f"Python package CMake configure preset; defaults to {DEFAULT_PRESET}",
     )
     parser.add_argument(
         "--out-root",
@@ -231,6 +175,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Pass --stable-abi to the inner wheel build",
     )
     parser.add_argument(
+        "--install",
+        action="store_true",
+        help="Install the built wheel with uv pip install after metadata verification",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print release plans without copying sources or building wheels",
@@ -254,50 +203,50 @@ def main(argv: list[str]) -> int:
     build_profile = args.build_profile or args.profile
 
     repo_root = pgo_configure.repo_root_from_script()
-    variant_names = list(VARIANTS) if args.all_variants else [args.variant]
 
     if args.dry_run:
-        for variant_name in variant_names:
-            plan = create_release_plan(
-                repo_root=repo_root,
-                variant_name=variant_name,
-                source_tree=pathlib.Path("<temporary-source-tree>"),
-                out_root=args.out_root,
-                clear=args.clear,
-                stable_abi=args.stable_abi,
-                host_profile=host_profile,
-                build_profile=build_profile,
-            )
-            print(f"variant: {plan.variant.name}", flush=True)
-            print(f"distribution: {plan.variant.distribution}", flush=True)
-            print(f"preset: {plan.variant.preset}", flush=True)
-            print(f"out-dir: {plan.out_dir}", flush=True)
-            pgo_configure.print_command(plan.inner_command)
+        plan = create_release_plan(
+            repo_root=repo_root,
+            preset_name=args.preset,
+            source_tree=pathlib.Path("<temporary-source-tree>"),
+            out_root=args.out_root,
+            clear=args.clear,
+            stable_abi=args.stable_abi,
+            install=args.install,
+            host_profile=host_profile,
+            build_profile=build_profile,
+        )
+        print(f"distribution: {plan.distribution}", flush=True)
+        print(f"preset: {plan.preset}", flush=True)
+        print(f"out-dir: {plan.out_dir}", flush=True)
+        pgo_configure.print_command(plan.inner_command)
+        if plan.install:
+            pgo_configure.print_command(create_install_command(plan, pathlib.Path("<built-wheel>")))
         return 0
 
     try:
-        for variant_name in variant_names:
-            with tempfile.TemporaryDirectory(prefix=f"pgo-release-{variant_name}-") as temp_dir:
-                source_tree = pathlib.Path(temp_dir) / "src"
-                plan = create_release_plan(
-                    repo_root=repo_root,
-                    variant_name=variant_name,
-                    source_tree=source_tree,
-                    out_root=args.out_root,
-                    clear=args.clear,
-                    stable_abi=args.stable_abi,
-                    host_profile=host_profile,
-                    build_profile=build_profile,
-                )
-                print(f"Building {plan.variant.distribution} from {plan.variant.preset}", flush=True)
-                run_release_plan(plan, repo_root)
-                if args.keep_temp:
-                    kept_tree = repo_root / "build/release-sources" / variant_name
-                    if kept_tree.exists():
-                        shutil.rmtree(kept_tree)
-                    kept_tree.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copytree(source_tree, kept_tree, ignore=COPY_IGNORE)
-                    print(f"Kept temporary source tree at {kept_tree}", flush=True)
+        with tempfile.TemporaryDirectory(prefix="pgo-release-") as temp_dir:
+            source_tree = pathlib.Path(temp_dir) / "src"
+            plan = create_release_plan(
+                repo_root=repo_root,
+                preset_name=args.preset,
+                source_tree=source_tree,
+                out_root=args.out_root,
+                clear=args.clear,
+                stable_abi=args.stable_abi,
+                install=args.install,
+                host_profile=host_profile,
+                build_profile=build_profile,
+            )
+            print(f"Building {plan.distribution} from {plan.preset}", flush=True)
+            run_release_plan(plan, repo_root)
+            if args.keep_temp:
+                kept_tree = repo_root / "build/release-sources" / plan.preset
+                if kept_tree.exists():
+                    shutil.rmtree(kept_tree)
+                kept_tree.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(source_tree, kept_tree, ignore=COPY_IGNORE)
+                print(f"Kept temporary source tree at {kept_tree}", flush=True)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         print(f"error: {error}", file=sys.stderr)
         if isinstance(error, subprocess.CalledProcessError):

@@ -12,4 +12,7 @@ target_include_directories(pgo_parallel_runtime PUBLIC
 if(PGO_ENABLE_TBB)
     target_link_libraries(pgo_parallel_runtime PUBLIC TBB::tbb)
     target_compile_definitions(pgo_parallel_runtime PUBLIC PGO_ENABLE_TBB)
+    if(MSVC)
+        target_compile_definitions(pgo_parallel_runtime PUBLIC __TBB_NO_IMPLICIT_LINKAGE=1)
+    endif()
 endif()

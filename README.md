@@ -68,9 +68,9 @@ automatically gets the `parallel_for` abstraction with TBB or serial fallback
 depending on `PGO_ENABLE_TBB`.
 
 The `pypgo-release-all` / `pypgo-release-accel-all` presets also inherit TBB.
-The Python wheel bundles the TBB shared library next to `_pgo_ext` and sets
-`@loader_path`/`$ORIGIN` RPATH so `import pgo` does not need a system-wide
-TBB install (see Phase 4 wheel-bundling task).
+Both Python presets build the `pgo` distribution. The default preset exercises
+the no-MKL fallback path; the accel preset enables Eigen acceleration and uses
+MKL/Accelerate when present.
 
 ### Visible Presets
 
@@ -192,28 +192,6 @@ cmake --build --preset release-accel --target pgo_benchmarks
 
 ## Python Package
 
-The Python package wraps `pgo_c` via nanobind. Install in editable mode after
-configuring with a C-API-enabled preset:
-
-```bash
-python scripts/pgo_configure.py debug
-uv pip install -e . --no-build-isolation \
-  -Ccmake.build-type=Debug \
-  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/debug/conan_toolchain.cmake
-uv run pytest tests/python -q
-```
-
-For the accelerated variant:
-
-```bash
-python scripts/pgo_configure.py debug-accel
-uv pip install -e . --no-build-isolation \
-  -Ccmake.build-type=Debug \
-  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/debug-accel/conan_toolchain.cmake \
-  -Ccmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON
-uv run pytest tests/python -q
-```
-
 Build a release wheel:
 
 ```bash
@@ -228,26 +206,30 @@ wrapper prepares the matching Conan/CMake preset, then forwards the resolved
 Build release distributions:
 
 ```bash
-uv run python scripts/pgo_release_wheels.py --variant default --clear
-uv run python scripts/pgo_release_wheels.py --variant accel --clear
-uv run python scripts/pgo_release_wheels.py --all --clear
+uv run python scripts/pgo_release_wheels.py --clear
+uv run python scripts/pgo_release_wheels.py pypgo-release-accel-all --clear
 ```
 
-The release wrapper builds from temporary source trees. The source
-`pyproject.toml` keeps `name = "pgo"`; the accelerated temporary tree is patched
-to publish the `pgo-accel` distribution while the import package remains `pgo`.
-Do not install `pgo` and `pgo-accel` in the same environment.
+The release wrapper builds from a temporary source tree and always publishes the
+`pgo` distribution. Use `pypgo-release-all` for the fallback/no-MKL wheel path
+and `pypgo-release-accel-all` for the accelerated wheel path.
 
 Pass an explicit Conan profile when the default detected profile is not what
 you want (CI uses this; locally it is optional):
 
 ```bash
-uv run python scripts/pgo_release_wheels.py --variant accel \
-  --profile conan/profiles/ubuntu-x86_64-gcc --clear
+uv run python scripts/pgo_release_wheels.py pypgo-release-accel-all \
+  --profile conan/profiles/ubuntu-x86_64-gcc --clear --install
 ```
 
 Use `--host-profile` / `--build-profile` instead of `--profile` if the host and
 build contexts need to differ. The flags are forwarded to `pgo_build_wheel.py`.
+
+Install the wheel with uv pip:
+
+```bash
+uv pip install dist/pgo/*.whl
+```
 
 ## Header Layout
 
@@ -325,9 +307,10 @@ Threading policy:
 - Keep Eigen/BLAS acceleration controlled by the `-accel` presets.
 - Avoid nested oversubscription: do not blindly combine TBB outer loops with multi-threaded BLAS kernels in the same hot path.
 
-Python wheels (`pypgo-release-all`, `pypgo-release-accel-all`) bundle the TBB
-shared library inside the `pgo/` package directory with `@loader_path`/`$ORIGIN`
-RPATH, so `import pgo` works on machines without a system-wide TBB install.
+Python wheels (`pypgo-release-all`, `pypgo-release-accel-all`) bundle required
+runtime libraries inside the `pgo/` package directory with `@loader_path` /
+`$ORIGIN` RPATH, so `import pgo` works without a system-wide TBB install. MKL
+runtime libraries are bundled when the accel wheel is built against oneMKL.
 
 ## Useful Notes
 
