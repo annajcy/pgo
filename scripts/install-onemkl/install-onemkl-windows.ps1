@@ -24,16 +24,44 @@ if (-not $mklRoot) {
 $mklCmakeDir = Join-Path $mklRoot "lib\cmake\mkl"
 $mklLibDir = Join-Path $mklRoot "lib\intel64"
 $mklBinDir = Join-Path $mklRoot "bin"
+$mklBinIntel64Dir = Join-Path $mklRoot "bin\intel64"
 $mklRedistDir = Join-Path $mklRoot "redist\intel64"
+$mklRedistMklDir = Join-Path $mklRoot "redist\intel64\mkl"
 $oneApiRoot = Split-Path -Parent (Split-Path -Parent $mklRoot)
 $compilerBinDir = Join-Path $oneApiRoot "compiler\latest\bin"
+
+$requiredRuntimeDlls = @(
+    "mkl_core.2.dll",
+    "mkl_def.2.dll",
+    "mkl_intel_lp64.2.dll",
+    "mkl_intel_thread.2.dll",
+    "libiomp5md.dll"
+)
+$runtimeSearchRoots = @(
+    $mklRoot,
+    (Join-Path $oneApiRoot "compiler\latest")
+) | Where-Object { Test-Path $_ }
+$discoveredRuntimeDirs = @()
+foreach ($runtimeDll in $requiredRuntimeDlls) {
+    $runtimeFile = $runtimeSearchRoots |
+        ForEach-Object { Get-ChildItem -Path $_ -Recurse -Filter $runtimeDll -File -ErrorAction SilentlyContinue } |
+        Select-Object -First 1
+    if (-not $runtimeFile) {
+        throw "Intel oneMKL runtime DLL was not found: $runtimeDll"
+    }
+    $discoveredRuntimeDirs += $runtimeFile.DirectoryName
+}
+
 $runtimeDirs = @(
     @(
         $mklBinDir,
+        $mklBinIntel64Dir,
         $mklRedistDir,
+        $mklRedistMklDir,
         $mklLibDir,
-        $compilerBinDir
-    ) | Where-Object { Test-Path $_ }
+        $compilerBinDir,
+        $discoveredRuntimeDirs
+    ) | Where-Object { Test-Path $_ } | Select-Object -Unique
 )
 
 $env:MKLROOT = $mklRoot

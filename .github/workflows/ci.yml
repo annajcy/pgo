@@ -138,6 +138,7 @@ jobs:
         if: contains(matrix.preset, 'accel') && runner.os == 'Windows'
         run: |
           where.exe mkl_core.2.dll
+          where.exe mkl_def.2.dll
           where.exe mkl_intel_thread.2.dll
           where.exe libiomp5md.dll
 

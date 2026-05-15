@@ -153,11 +153,14 @@ if(PGO_SELECTED_EIGEN_ACCELERATION_BACKEND STREQUAL "MKL")
         if(WIN32)
             set(pgo_mkl_runtime_dirs
                 "${pgo_mkl_runtime_root}/redist/intel64"
+                "${pgo_mkl_runtime_root}/redist/intel64/mkl"
                 "${pgo_mkl_runtime_root}/bin"
+                "${pgo_mkl_runtime_root}/bin/intel64"
                 "${pgo_mkl_runtime_root}/lib/intel64"
             )
             set(pgo_mkl_runtime_names
                 mkl_core.2.dll
+                mkl_def.2.dll
                 mkl_intel_lp64.2.dll
                 mkl_intel_thread.2.dll
             )

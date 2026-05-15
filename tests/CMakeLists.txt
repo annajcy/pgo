@@ -2,10 +2,44 @@ include(GoogleTest)
 
 function(pgo_copy_runtime_dlls target_name)
     if(WIN32)
+        set(pgo_mkl_runtime_artifacts)
+        if(PGO_SELECTED_EIGEN_ACCELERATION_BACKEND STREQUAL "MKL" AND DEFINED ENV{MKLROOT})
+            cmake_path(CONVERT "$ENV{MKLROOT}" TO_CMAKE_PATH_LIST pgo_mkl_root NORMALIZE)
+            set(pgo_mkl_runtime_dirs
+                "${pgo_mkl_root}/redist/intel64"
+                "${pgo_mkl_root}/redist/intel64/mkl"
+                "${pgo_mkl_root}/bin"
+                "${pgo_mkl_root}/bin/intel64"
+                "${pgo_mkl_root}/lib/intel64"
+            )
+            set(pgo_mkl_runtime_names
+                mkl_core.2.dll
+                mkl_def.2.dll
+                mkl_intel_lp64.2.dll
+                mkl_intel_thread.2.dll
+            )
+            get_filename_component(pgo_oneapi_root "${pgo_mkl_root}/../.." ABSOLUTE)
+            file(GLOB pgo_mkl_openmp_candidates
+                "${pgo_oneapi_root}/compiler/latest/bin/libiomp5md.dll"
+                "${pgo_oneapi_root}/compiler/latest/redist/intel64/compiler/libiomp5md.dll"
+            )
+
+            foreach(pgo_mkl_runtime_dir IN LISTS pgo_mkl_runtime_dirs)
+                foreach(pgo_mkl_runtime_name IN LISTS pgo_mkl_runtime_names)
+                    if(EXISTS "${pgo_mkl_runtime_dir}/${pgo_mkl_runtime_name}")
+                        list(APPEND pgo_mkl_runtime_artifacts "${pgo_mkl_runtime_dir}/${pgo_mkl_runtime_name}")
+                    endif()
+                endforeach()
+            endforeach()
+            list(APPEND pgo_mkl_runtime_artifacts ${pgo_mkl_openmp_candidates})
+            list(REMOVE_DUPLICATES pgo_mkl_runtime_artifacts)
+        endif()
+
         add_custom_command(TARGET ${target_name} POST_BUILD
             COMMAND "${CMAKE_COMMAND}" -E copy -t
                 "$<TARGET_FILE_DIR:${target_name}>"
                 "$<TARGET_RUNTIME_DLLS:${target_name}>"
+                ${pgo_mkl_runtime_artifacts}
             COMMAND_EXPAND_LISTS
         )
     endif()

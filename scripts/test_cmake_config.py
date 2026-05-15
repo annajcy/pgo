@@ -22,6 +22,8 @@ class CMakeConfigTest(unittest.TestCase):
         content = (REPO_ROOT / "src/python/CMakeLists.txt").read_text(encoding="utf-8")
 
         self.assertIn("mkl_core.2.dll", content)
+        self.assertIn("mkl_def.2.dll", content)
+        self.assertIn("bin/intel64", content)
         self.assertIn("libmkl_core.so.2", content)
         self.assertIn("libiomp5", content)
         self.assertIn("cmake_path(CONVERT", content)
@@ -43,7 +45,17 @@ class CMakeConfigTest(unittest.TestCase):
         content = (REPO_ROOT / "tests/CMakeLists.txt").read_text(encoding="utf-8")
 
         self.assertIn("$<TARGET_RUNTIME_DLLS:${target_name}>", content)
+        self.assertIn("mkl_def.2.dll", content)
+        self.assertIn("bin/intel64", content)
+        self.assertIn('cmake_path(CONVERT "$ENV{MKLROOT}"', content)
         self.assertIn("pgo_copy_runtime_dlls(pgo_tests)", content)
+
+    def test_windows_onemkl_install_script_discovers_dynamic_runtime_dirs(self) -> None:
+        content = (REPO_ROOT / "scripts/install-onemkl/install-onemkl-windows.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("mkl_def.2.dll", content)
+        self.assertIn("Get-ChildItem -Path $_ -Recurse", content)
+        self.assertIn("GITHUB_PATH", content)
 
 
 if __name__ == "__main__":
