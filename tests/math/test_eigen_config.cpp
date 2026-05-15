@@ -90,4 +90,32 @@ TEST(EigenConfig, EnabledAutoBackendMatchesPlatformConvention) {
     }
 }
 
+TEST(EigenConfig, EigenInternalParallelismIsDisabled) {
+#if defined(EIGEN_DONT_PARALLELIZE)
+    SUCCEED();
+#else
+    FAIL() << "EIGEN_DONT_PARALLELIZE should be defined by pgo::eigen_config";
+#endif
+}
+
+TEST(EigenConfig, EigenAlignmentOverrideIsOptional) {
+#if defined(EIGEN_MAX_ALIGN_BYTES)
+    EXPECT_GT(EIGEN_MAX_ALIGN_BYTES, 0);
+#else
+    SUCCEED() << "default configuration keeps Eigen/platform alignment policy";
+#endif
+}
+
+TEST(EigenConfig, MklNoDirectCallIsOptInAndScopedToMklBackend) {
+#if defined(EIGEN_MKL_NO_DIRECT_CALL)
+    #if defined(PGO_EIGEN_ACCELERATION_MKL)
+        SUCCEED() << "MKL backend explicitly opted into EIGEN_MKL_NO_DIRECT_CALL";
+    #else
+        FAIL() << "EIGEN_MKL_NO_DIRECT_CALL must not leak outside the MKL backend";
+    #endif
+#else
+    SUCCEED() << "default configuration keeps Eigen direct-MKL-call path enabled";
+#endif
+}
+
 } // namespace pgo::math::test

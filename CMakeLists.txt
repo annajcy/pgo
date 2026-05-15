@@ -28,11 +28,12 @@ target_include_directories(pgo_core INTERFACE
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(pgo_core INTERFACE pgo::eigen_config pgo::project_options)
+target_link_libraries(pgo_core INTERFACE pgo::eigen_config pgo::project_options pgo::parallel_runtime)
 target_link_libraries(pgo_core INTERFACE pgo_project_warnings pgo_project_sanitizers)
 
 add_subdirectory(src/io)
 add_subdirectory(src/log)
+add_subdirectory(src/parallel)
 
 target_link_libraries(pgo_log PUBLIC pgo::project_options)
 

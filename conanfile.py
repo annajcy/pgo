@@ -11,10 +11,12 @@ class PgoRecipe(ConanFile):
     options = {
         "enable_spdlog": [True, False],
         "enable_alembic": [True, False],
+        "enable_tbb": [True, False],
     }
     default_options = {
         "enable_spdlog": False,
         "enable_alembic": False,
+        "enable_tbb": False,
     }
 
     def generate(self):
@@ -33,6 +35,8 @@ class PgoRecipe(ConanFile):
             self.requires("alembic/1.8.8")
         if self.options.enable_spdlog:
             self.requires("spdlog/[>=1.14 <2]")
+        if self.options.enable_tbb:
+            self.requires("onetbb/[>=2021.12 <2023]")
 
     def build_requirements(self):
         self.test_requires("benchmark/[>=1.9 <2]")

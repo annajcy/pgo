@@ -3,6 +3,18 @@ add_library(pgo::eigen_config ALIAS pgo_eigen_config)
 
 target_link_libraries(pgo_eigen_config INTERFACE Eigen3::Eigen)
 
+if(PGO_EIGEN_DONT_PARALLELIZE)
+    target_compile_definitions(pgo_eigen_config INTERFACE
+        EIGEN_DONT_PARALLELIZE
+    )
+endif()
+
+if(NOT PGO_EIGEN_MAX_ALIGN_BYTES STREQUAL "")
+    target_compile_definitions(pgo_eigen_config INTERFACE
+        EIGEN_MAX_ALIGN_BYTES=${PGO_EIGEN_MAX_ALIGN_BYTES}
+    )
+endif()
+
 set(PGO_SELECTED_EIGEN_ACCELERATION_BACKEND "NONE")
 
 if(PGO_ENABLE_EIGEN_ACCELERATION)
@@ -57,6 +69,12 @@ if(PGO_SELECTED_EIGEN_ACCELERATION_BACKEND STREQUAL "MKL")
         EIGEN_USE_MKL_ALL
         PGO_EIGEN_ACCELERATION_MKL
     )
+
+    if(PGO_EIGEN_MKL_NO_DIRECT_CALL)
+        target_compile_definitions(pgo_eigen_config INTERFACE
+            EIGEN_MKL_NO_DIRECT_CALL
+        )
+    endif()
 
     target_link_libraries(pgo_eigen_config INTERFACE MKL::MKL)
 elseif(PGO_SELECTED_EIGEN_ACCELERATION_BACKEND STREQUAL "ACCELERATE")

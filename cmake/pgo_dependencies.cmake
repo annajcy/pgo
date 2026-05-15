@@ -20,3 +20,7 @@ endif()
 if(PGO_ENABLE_SPDLOG)
     find_package(spdlog CONFIG REQUIRED)
 endif()
+
+if(PGO_ENABLE_TBB)
+    find_package(TBB REQUIRED CONFIG)
+endif()

@@ -4,7 +4,7 @@
 
 **目标:** 为 PGO 引入可选 TBB task-parallel runtime，提供 `pgo::parallel` 抽象层，让 simulation/assembly 外层循环可以在 TBB 与串行 fallback 之间切换，并同步整理 Eigen threading / MKL / alignment、MSVC 编译选项、Release debug symbols 策略。
 
-**架构:** TBB 不进入 `pgo::core` 默认依赖；需要并行能力的 target 显式链接 `pgo::parallel`。编译期只决定是否启用 TBB，线程数属于运行时配置，通过 `pgo::parallel::set_thread_count(...)` 控制。Eigen/BLAS 仍由现有 `pgo::eigen_config` 和 `release-accel` 体系负责；Eigen 内部线程默认禁用，避免与 TBB 外层任务并行抢线程。
+**架构:** `pgo::core` 透明 INTERFACE 链接 `pgo::parallel_runtime`，下游 examples/solver/integrator 通过 `pgo::core` 间接拿到 `parallel_for` 抽象，不再单独 link。编译期只决定是否启用 TBB，线程数属于运行时配置，通过 `pgo::parallel::set_thread_count(...)` 控制。Eigen/BLAS 仍由现有 `pgo::eigen_config` 和 `release-accel` 体系负责；Eigen 内部线程默认禁用，避免与 TBB 外层任务并行抢线程。
 
 **Tech Stack:** C++23、CMake Presets、Conan 2、oneTBB/TBB、GoogleTest、Google Benchmark、Eigen。
 
@@ -17,17 +17,19 @@
 - TBB 归入现有 `-all` preset 家族：`debug-all`、`debug-accel-all`、`release-all`、`release-accel-all` 会启用 TBB；不新增独立 TBB-only preset 维度。
 - `EIGEN_DONT_PARALLELIZE` 默认开启，表示 Eigen 自己不创建内部 worker threads；外层并行由 TBB 管。
 - `EIGEN_DONT_PARALLELIZE` 不等于禁用 MKL/Accelerate。MKL/Accelerate backend 仍由 `PGO_ENABLE_EIGEN_ACCELERATION` 和 `PGO_EIGEN_ACCELERATION_BACKEND` 控制。
-- `EIGEN_MKL_NO_DIRECT_CALL` 仅在 MKL backend 下可选启用，默认 `ON`，用于减少 Eigen 对 MKL direct-call path 的耦合。
+- `EIGEN_MKL_NO_DIRECT_CALL` 仅在 MKL backend 下可选启用，**默认 `OFF`**；保留 Eigen direct-MKL-call path 以避免性能回退，需要时再 `-DPGO_EIGEN_MKL_NO_DIRECT_CALL=ON` 显式 opt-in。
 - `EIGEN_MAX_ALIGN_BYTES` 不默认硬设；通过 `PGO_EIGEN_MAX_ALIGN_BYTES` cache string 显式覆盖，空字符串保留 Eigen/platform 默认。
-- MSVC 默认启用 `/MP`、`/bigobj`、`/Zc:__cplusplus`，提升 Windows 构建体验和模板代码兼容性。
-- MSVC CPU ISA 不默认固定 AVX2；通过 `PGO_MSVC_ARCH` 显式选择 `DEFAULT`、`AVX`、`AVX2` 或 `AVX512`。
-- `PGO_MSVC_ARCH=DEFAULT` 不添加 `/arch:*`，适合可移植 Windows binary；本地性能测试可以显式使用 `-DPGO_MSVC_ARCH=AVX2` 或 `AVX512`。
+- MSVC 默认启用 `/MP`、`/bigobj`、`/Zc:__cplusplus`，提升 Windows 构建体验和模板代码兼容性；这三项**无条件**应用于 MSVC，不受 `PGO_ENABLE_NATIVE_ARCH` 控制。
+- MSVC CPU ISA 通过 `PGO_MSVC_ARCH` 显式选择 `DEFAULT`、`AVX`、`AVX2` 或 `AVX512`。
+- `PGO_MSVC_ARCH` 解析顺序：(1) 显式 `AVX`/`AVX2`/`AVX512` 永远生效；(2) `DEFAULT` 且 `PGO_ENABLE_NATIVE_ARCH=ON` 回退到 `AVX2`（保留旧版默认行为）；(3) `DEFAULT` 且 `PGO_ENABLE_NATIVE_ARCH=OFF` 不加 `/arch:*`，生成可移植 Windows binary。
 - Release debug symbols 通过 `PGO_ENABLE_RELEASE_DEBUG_SYMBOLS` 显式开启，默认 `OFF`；用于 profile、crash backtrace 和优化构建调试。
 - `PGO_ENABLE_RELEASE_DEBUG_SYMBOLS=ON` 在 GNU/Clang/AppleClang Release 下加 `-g`，在 MSVC Release 下加 `/Zi` 和 linker debug info；不把 `-ggdb3` 无条件塞进所有 Release 构建。
 - CMake 只在 `PGO_ENABLE_TBB=ON` 时 `find_package(TBB REQUIRED CONFIG)`。
-- 新增 `pgo_parallel` / `pgo::parallel` interface target。
-- `pgo::parallel` 在 TBB ON 时链接 `TBB::tbb` 并定义 `PGO_ENABLE_TBB`；TBB OFF 时不链接额外库。
+- 只新增 `pgo_parallel_runtime` / `pgo::parallel_runtime` STATIC target（含 `runtime.cpp` 实现 + header propagation）；不再额外引入 INTERFACE `pgo::parallel`，简化命名与 link 关系。
+- `pgo::parallel_runtime` 在 TBB ON 时 **PUBLIC** 链接 `TBB::tbb` 并 PUBLIC 定义 `PGO_ENABLE_TBB`，让下游头文件展开 `parallel_for` 时也能看到该 macro；TBB OFF 时只编 serial fallback，不链接额外库。
 - 业务代码不直接依赖 `tbb::parallel_for`；统一调用 `pgo::parallel::parallel_for(...)`。
+- pypgo wheel 在 `PGO_ENABLE_TBB=ON` 时通过 `install(IMPORTED_RUNTIME_ARTIFACTS TBB::tbb)` 把 TBB 动态库随 `_pgo_ext` 打进 `pgo/` 包目录，并配 `@loader_path`/`$ORIGIN` RPATH，使 `import pgo` 不依赖系统 TBB。
+- `runtime_thread_count` 用 `std::atomic<int>` 读写，无需 mutex；mutex 只用于保护 `oneapi::tbb::global_control` 的 `unique_ptr` 重建。
 - `thread_count` 是运行时配置，不是 CMake cache variable。
 - `thread_count == 0` 表示使用 runtime 默认并行度。
 - `thread_count == 1` 表示强制串行执行，方便 debug 和 benchmark 对照。
@@ -40,32 +42,35 @@
 
 ```text
 .
-  CMakeLists.txt
-  CMakePresets.json
-  conanfile.py
+  CMakeLists.txt                    # modify: add_subdirectory(src/parallel) + pgo_core 链接 parallel_runtime
+  CMakePresets.json                 # modify: all-opt 注入 PGO_ENABLE_TBB
+  conanfile.py                      # modify: enable_tbb option + 可选 onetbb 依赖
   cmake/
-    pgo_dependencies.cmake
-    pgo_eigen.cmake
-    pgo_options.cmake
-    pgo_parallel.cmake
-    pgo_project_options.cmake
+    pgo_dependencies.cmake          # modify: find_package(TBB) gated by PGO_ENABLE_TBB
+    pgo_eigen.cmake                 # modify: EIGEN_DONT_PARALLELIZE / MAX_ALIGN_BYTES / MKL_NO_DIRECT_CALL
+    pgo_options.cmake               # modify: PGO_ENABLE_TBB, PGO_EIGEN_* policy options
+    pgo_project_options.cmake       # modify: PGO_MSVC_ARCH, PGO_ENABLE_RELEASE_DEBUG_SYMBOLS
   include/
     pgo/
       parallel/
-        parallel_for.hpp
-        runtime.hpp
+        parallel_for.hpp            # new
+        runtime.hpp                 # new
   src/
     parallel/
-      CMakeLists.txt
-      runtime.cpp
+      CMakeLists.txt                # new: 直接 add_library(pgo_parallel_runtime STATIC)，不通过 cmake/pgo_parallel.cmake 中转
+      runtime.cpp                   # new
+    python/
+      CMakeLists.txt                # modify: install(IMPORTED_RUNTIME_ARTIFACTS TBB::tbb) when PGO_ENABLE_TBB
   tests/
     parallel/
-      test_parallel_for.cpp
+      test_parallel_for.cpp         # new
+    math/
+      test_eigen_config.cpp         # modify: Eigen policy assertions
   benchmarks/
     parallel/
-      bench_parallel_for.cpp
+      bench_parallel_for.cpp        # new
   scripts/
-    pgo_configure.py
+    pgo_configure.py                # modify: PGO_ENABLE_TBB -> enable_tbb forwarding
 ```
 
 ## Phase 1: Dependency And Build Integration
@@ -120,13 +125,13 @@ git status --short conanfile.py
 
 Expected: only the intended Conan option and optional dependency changes appear.
 
-### Task 1.2: Add CMake option, dependency lookup, and parallel target
+### Task 1.2: Add CMake option and TBB dependency lookup
 
 **Files:**
 - Modify: `cmake/pgo_options.cmake`
 - Modify: `cmake/pgo_dependencies.cmake`
-- Create: `cmake/pgo_parallel.cmake`
-- Modify: `CMakeLists.txt`
+
+注：parallel target 本身在 Phase 4 才创建（直接在 `src/parallel/CMakeLists.txt` 里 `add_library(pgo_parallel_runtime STATIC ...)`），本期不再单独引入 `cmake/pgo_parallel.cmake` 或 INTERFACE `pgo::parallel` 中间层。
 
 - [ ] **Step 1: Add CMake option**
 
@@ -138,7 +143,7 @@ option(PGO_ENABLE_TBB "Enable TBB-backed task parallelism" OFF)
 
 - [ ] **Step 2: Add dependency lookup**
 
-Add this to `cmake/pgo_dependencies.cmake`:
+紧跟 `cmake/pgo_dependencies.cmake` 现有 `find_package` 块尾部追加：
 
 ```cmake
 if(PGO_ENABLE_TBB)
@@ -146,35 +151,9 @@ if(PGO_ENABLE_TBB)
 endif()
 ```
 
-- [ ] **Step 3: Create the parallel target module**
+`pgo_dependencies.cmake` 在顶层 `CMakeLists.txt` 第 8 行被 include，早于 `add_subdirectory(src/parallel)`，所以 Phase 4 创建 `pgo_parallel_runtime` 时 `TBB::tbb` 已 ready。
 
-Create `cmake/pgo_parallel.cmake`:
-
-```cmake
-add_library(pgo_parallel INTERFACE)
-add_library(pgo::parallel ALIAS pgo_parallel)
-
-target_include_directories(pgo_parallel INTERFACE
-    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>
-)
-target_compile_features(pgo_parallel INTERFACE cxx_std_23)
-
-if(PGO_ENABLE_TBB)
-    target_link_libraries(pgo_parallel INTERFACE TBB::tbb)
-    target_compile_definitions(pgo_parallel INTERFACE PGO_ENABLE_TBB)
-endif()
-```
-
-- [ ] **Step 4: Include the module from the top-level CMake**
-
-In `CMakeLists.txt`, include `cmake/pgo_parallel.cmake` after dependencies and options are loaded:
-
-```cmake
-include(cmake/pgo_parallel.cmake)
-```
-
-- [ ] **Step 5: Configure without TBB**
+- [ ] **Step 3: Configure without TBB**
 
 Run:
 
@@ -184,9 +163,9 @@ cmake --preset release
 
 Expected: configure succeeds without looking for `TBB::tbb`.
 
-- [ ] **Step 6: Configure with TBB using a temporary build folder**
+- [ ] **Step 4: Configure with TBB using a temporary build folder**
 
-Run:
+Run（`conan/profiles/default` 是 Jinja 模板，按 `platform.system()` 自动 include 对应平台 profile，所以三大平台都可直接用）：
 
 ```bash
 conan install . \
@@ -203,18 +182,18 @@ cmake -S . -B build/tbb-probe -G Ninja \
   -DPGO_ENABLE_TBB=ON
 ```
 
-Expected: configure succeeds and `TBB::tbb` is available.
+Expected: configure succeeds and `TBB::tbb` is available。macOS arm64 首次 CI 若 conancenter 缺 prebuilt binary，`--build=missing` 会自动 fallback 到 source build；后续 conan cache 命中后可省略该 flag。
 
-- [ ] **Step 7: Inspect changed files**
+- [ ] **Step 5: Inspect changed files**
 
 Run:
 
 ```bash
-git diff -- CMakeLists.txt cmake/pgo_options.cmake cmake/pgo_dependencies.cmake cmake/pgo_parallel.cmake
-git status --short CMakeLists.txt cmake/pgo_options.cmake cmake/pgo_dependencies.cmake cmake/pgo_parallel.cmake
+git diff -- cmake/pgo_options.cmake cmake/pgo_dependencies.cmake
+git status --short cmake/pgo_options.cmake cmake/pgo_dependencies.cmake
 ```
 
-Expected: only the intended CMake option, dependency lookup, and parallel target changes appear.
+Expected: only the intended CMake option and dependency lookup changes appear; no `cmake/pgo_parallel.cmake` is created.
 
 ### Task 1.3: Teach pgo-configure to forward PGO_ENABLE_TBB
 
@@ -233,9 +212,9 @@ CMAKE_TO_CONAN_OPTIONS: dict[str, tuple[str, dict[str, str]]] = {
 }
 ```
 
-- [ ] **Step 2: Verify dry-run forwarding**
+- [ ] **Step 2: Verify dry-run forwarding** *(执行顺序：先做完 Task 1.4 再回来跑这一步；`release-all` 预设里加上 TBB 之后这条 dry-run 才能观察到 forwarding 行为)*
 
-After Task 1.4 adds presets, run:
+Run:
 
 ```bash
 uv run pgo-configure release-all --dry-run
@@ -302,8 +281,15 @@ In `README.md`, update the preset matrix and `-all` description:
 
 ```markdown
 `-all` enables optional compile-time dependencies: spdlog, Alembic, and the
-TBB-backed `pgo::parallel` runtime. Code that needs task parallelism should link
-`pgo::parallel_runtime`; `pgo::core` remains usable without TBB.
+TBB-backed `pgo::parallel_runtime` task runtime. `pgo::core` links it
+transitively, so any consumer of `pgo::core` (examples, solver, integrator)
+automatically gets the `parallel_for` abstraction with TBB or serial fallback
+depending on `PGO_ENABLE_TBB`.
+
+The `pypgo-release-all` / `pypgo-release-accel-all` presets also inherit TBB.
+The Python wheel bundles the TBB shared library next to `_pgo_ext` and sets
+`@loader_path`/`$ORIGIN` RPATH so `import pgo` does not need a system-wide
+TBB install (see Phase 4 wheel-bundling task).
 ```
 
 - [ ] **Step 3: Verify all preset Conan forwarding**
@@ -355,45 +341,47 @@ set_property(CACHE PGO_MSVC_ARCH PROPERTY STRINGS DEFAULT AVX AVX2 AVX512)
 
 - [ ] **Step 2: Replace the hard-coded MSVC AVX2 branch**
 
-Replace the existing MSVC branch:
+按下面三个改动重写 `cmake/pgo_project_options.cmake` 里 MSVC 相关逻辑：
+
+1. **删掉** 现有 `if(PGO_ENABLE_NATIVE_ARCH) ... elseif(MSVC) ... $<$<CONFIG:Release>:/arch:AVX2> ...` 整段中的 MSVC 分支（保留 GNU/Clang 分支不动）。
+
+2. 在 `if(PGO_ENABLE_NATIVE_ARCH)` 块**之外**追加 MSVC 工程类 flag（这三项跟 ISA 无关，无条件应用）：
 
 ```cmake
-elseif(MSVC)
-    target_compile_options(pgo_project_options INTERFACE
-        $<$<CONFIG:Release>:/arch:AVX2>
-    )
-endif()
-```
-
-with:
-
-```cmake
-elseif(MSVC)
+if(MSVC)
     target_compile_options(pgo_project_options INTERFACE
         /MP
         /bigobj
         /Zc:__cplusplus
     )
+endif()
+```
 
-    if(PGO_MSVC_ARCH STREQUAL "AVX")
-        target_compile_options(pgo_project_options INTERFACE
-            $<$<CONFIG:Release>:/arch:AVX>
-        )
-    elseif(PGO_MSVC_ARCH STREQUAL "AVX2")
-        target_compile_options(pgo_project_options INTERFACE
-            $<$<CONFIG:Release>:/arch:AVX2>
-        )
-    elseif(PGO_MSVC_ARCH STREQUAL "AVX512")
-        target_compile_options(pgo_project_options INTERFACE
-            $<$<CONFIG:Release>:/arch:AVX512>
-        )
-    elseif(PGO_MSVC_ARCH STREQUAL "DEFAULT")
-        # Keep the MSVC compiler default ISA for portable Windows binaries.
+3. 在上面之后追加 MSVC ISA 解析逻辑；`DEFAULT` + `PGO_ENABLE_NATIVE_ARCH=ON` 回退到 `AVX2` 以保留旧版默认行为：
+
+```cmake
+if(MSVC)
+    set(_pgo_msvc_resolved_arch "${PGO_MSVC_ARCH}")
+    if(_pgo_msvc_resolved_arch STREQUAL "DEFAULT" AND PGO_ENABLE_NATIVE_ARCH)
+        set(_pgo_msvc_resolved_arch "AVX2")
+        message(STATUS "PGO_MSVC_ARCH=DEFAULT with PGO_ENABLE_NATIVE_ARCH=ON resolves to AVX2 (legacy default)")
+    endif()
+
+    if(_pgo_msvc_resolved_arch STREQUAL "AVX")
+        target_compile_options(pgo_project_options INTERFACE $<$<CONFIG:Release>:/arch:AVX>)
+    elseif(_pgo_msvc_resolved_arch STREQUAL "AVX2")
+        target_compile_options(pgo_project_options INTERFACE $<$<CONFIG:Release>:/arch:AVX2>)
+    elseif(_pgo_msvc_resolved_arch STREQUAL "AVX512")
+        target_compile_options(pgo_project_options INTERFACE $<$<CONFIG:Release>:/arch:AVX512>)
+    elseif(_pgo_msvc_resolved_arch STREQUAL "DEFAULT")
+        # NATIVE_ARCH=OFF + DEFAULT：保留 MSVC 编译器默认 ISA，生成可移植 Windows binary
     else()
         message(FATAL_ERROR "Unknown PGO_MSVC_ARCH=${PGO_MSVC_ARCH}")
     endif()
 endif()
 ```
+
+这样 `PGO_ENABLE_NATIVE_ARCH=ON`（默认）+ MSVC 用户不显式设 `PGO_MSVC_ARCH` 时，仍然走 AVX2，性能不会回退；显式设 `-DPGO_MSVC_ARCH=AVX512` 或在 `NATIVE_ARCH=OFF` 下设 `DEFAULT` 才会改变行为。
 
 - [ ] **Step 3: Verify non-MSVC configure still works**
 
@@ -428,16 +416,23 @@ Add this note near the build/preset documentation:
 ```markdown
 ### MSVC Project Options
 
-On MSVC builds, PGO enables `/MP`, `/bigobj`, and `/Zc:__cplusplus` by default.
-CPU ISA flags are explicit rather than hard-coded. Use:
+On MSVC builds, PGO unconditionally enables `/MP`, `/bigobj`, and
+`/Zc:__cplusplus` to improve parallel compile throughput, template-heavy COFF
+section limits, and `__cplusplus` macro fidelity.
+
+CPU ISA selection is controlled by `PGO_MSVC_ARCH`:
 
 ```bash
-cmake --preset release -DPGO_MSVC_ARCH=AVX2
+cmake --preset release -DPGO_MSVC_ARCH=AVX512
 ```
 
-Valid values are `DEFAULT`, `AVX`, `AVX2`, and `AVX512`. `DEFAULT` keeps the
-compiler's portable default ISA and is preferred for binaries distributed to
-unknown Windows machines.
+Resolution order:
+
+1. Explicit `AVX` / `AVX2` / `AVX512` always wins.
+2. `DEFAULT` combined with `PGO_ENABLE_NATIVE_ARCH=ON` (the default) falls back
+   to `AVX2`, preserving the previous hard-coded behavior.
+3. `DEFAULT` combined with `PGO_ENABLE_NATIVE_ARCH=OFF` keeps the MSVC default
+   ISA — preferred when shipping binaries to unknown Windows machines.
 ```
 
 - [ ] **Step 2: Inspect changed files**
@@ -500,19 +495,15 @@ Run:
 
 ```bash
 cmake --preset release
-node - <<'NODE'
-const fs = require('fs');
-const commands = JSON.parse(fs.readFileSync('build/release/compile_commands.json', 'utf8'));
-const hasDebug = commands.some((entry) => {
-  const command = entry.command || entry.arguments.join(' ');
-  return /(^| )-g($| )/.test(command) || command.includes('/Zi');
-});
-if (hasDebug) {
-  console.error('release debug symbols should be disabled by default');
-  process.exit(1);
-}
-console.log('release debug symbols disabled by default');
-NODE
+uv run python - <<'PY'
+import json, re, sys
+commands = json.loads(open("build/release/compile_commands.json").read())
+def args(e): return e.get("command") or " ".join(e.get("arguments", []))
+hit = any(re.search(r"(^| )-g($| )", args(e)) or "/Zi" in args(e) for e in commands)
+if hit:
+    sys.exit("release debug symbols should be disabled by default")
+print("release debug symbols disabled by default")
+PY
 ```
 
 Expected: script prints `release debug symbols disabled by default`.
@@ -527,19 +518,15 @@ cmake -S . -B build/release-debug-symbols-probe -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE=build/conan/release/conan_toolchain.cmake \
   -DPGO_ENABLE_RELEASE_DEBUG_SYMBOLS=ON
 
-node - <<'NODE'
-const fs = require('fs');
-const commands = JSON.parse(fs.readFileSync('build/release-debug-symbols-probe/compile_commands.json', 'utf8'));
-const hit = commands.some((entry) => {
-  const command = entry.command || entry.arguments.join(' ');
-  return /(^| )-g($| )/.test(command) || command.includes('/Zi');
-});
-if (!hit) {
-  console.error('release debug symbols were not found after opt-in');
-  process.exit(1);
-}
-console.log('release debug symbols found after opt-in');
-NODE
+uv run python - <<'PY'
+import json, re, sys
+commands = json.loads(open("build/release-debug-symbols-probe/compile_commands.json").read())
+def args(e): return e.get("command") or " ".join(e.get("arguments", []))
+hit = any(re.search(r"(^| )-g($| )", args(e)) or "/Zi" in args(e) for e in commands)
+if not hit:
+    sys.exit("release debug symbols were not found after opt-in")
+print("release debug symbols found after opt-in")
+PY
 ```
 
 Expected: script prints `release debug symbols found after opt-in`.
@@ -586,10 +573,12 @@ Add these options near the existing Eigen acceleration option:
 
 ```cmake
 option(PGO_EIGEN_DONT_PARALLELIZE "Disable Eigen internal thread parallelism" ON)
-option(PGO_EIGEN_MKL_NO_DIRECT_CALL "Disable Eigen direct MKL calls when MKL acceleration is enabled" ON)
+option(PGO_EIGEN_MKL_NO_DIRECT_CALL "Disable Eigen direct MKL calls when MKL acceleration is enabled" OFF)
 
 set(PGO_EIGEN_MAX_ALIGN_BYTES "" CACHE STRING "Override Eigen max alignment bytes; empty keeps Eigen default")
 ```
+
+`PGO_EIGEN_MKL_NO_DIRECT_CALL` 默认 `OFF`：保留 Eigen 走 MKL direct-call path 的性能；如果发现某些 kernel 与 direct-call 兼容性差再 opt-in。
 
 - [ ] **Step 2: Inspect changed files**
 
@@ -645,23 +634,16 @@ Run:
 
 ```bash
 cmake --preset release
-node - <<'NODE'
-const fs = require('fs');
-const commands = JSON.parse(fs.readFileSync('build/release/compile_commands.json', 'utf8'));
-const eigenUsers = commands.filter((entry) => {
-  const command = entry.command || entry.arguments.join(' ');
-  return command.includes('PGO_EIGEN_ACCELERATION_NONE') || command.includes('EIGEN_USE_BLAS') || command.includes('EIGEN_USE_MKL_ALL');
-});
-const missing = eigenUsers.filter((entry) => {
-  const command = entry.command || entry.arguments.join(' ');
-  return !command.includes('EIGEN_DONT_PARALLELIZE');
-});
-if (missing.length !== 0) {
-  console.error(`EIGEN_DONT_PARALLELIZE missing from ${missing.length} Eigen compile commands`);
-  process.exit(1);
-}
-console.log(`EIGEN_DONT_PARALLELIZE found in ${eigenUsers.length} Eigen compile commands`);
-NODE
+uv run python - <<'PY'
+import json, sys
+commands = json.loads(open("build/release/compile_commands.json").read())
+def args(e): return e.get("command") or " ".join(e.get("arguments", []))
+eigen_users = [e for e in commands if any(tok in args(e) for tok in ("PGO_EIGEN_ACCELERATION_NONE", "EIGEN_USE_BLAS", "EIGEN_USE_MKL_ALL"))]
+missing = [e for e in eigen_users if "EIGEN_DONT_PARALLELIZE" not in args(e)]
+if missing:
+    sys.exit(f"EIGEN_DONT_PARALLELIZE missing from {len(missing)} Eigen compile commands")
+print(f"EIGEN_DONT_PARALLELIZE found in {len(eigen_users)} Eigen compile commands")
+PY
 ```
 
 Expected: script prints that `EIGEN_DONT_PARALLELIZE` is present in Eigen-using compile commands.
@@ -676,19 +658,15 @@ cmake -S . -B build/eigen-align-probe -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE=build/conan/release/conan_toolchain.cmake \
   -DPGO_EIGEN_MAX_ALIGN_BYTES=32
 
-node - <<'NODE'
-const fs = require('fs');
-const commands = JSON.parse(fs.readFileSync('build/eigen-align-probe/compile_commands.json', 'utf8'));
-const hit = commands.some((entry) => {
-  const command = entry.command || entry.arguments.join(' ');
-  return command.includes('EIGEN_MAX_ALIGN_BYTES=32');
-});
-if (!hit) {
-  console.error('EIGEN_MAX_ALIGN_BYTES=32 was not found in compile commands');
-  process.exit(1);
-}
-console.log('EIGEN_MAX_ALIGN_BYTES=32 found in compile commands');
-NODE
+uv run python - <<'PY'
+import json, sys
+commands = json.loads(open("build/eigen-align-probe/compile_commands.json").read())
+def args(e): return e.get("command") or " ".join(e.get("arguments", []))
+hit = any("EIGEN_MAX_ALIGN_BYTES=32" in args(e) for e in commands)
+if not hit:
+    sys.exit("EIGEN_MAX_ALIGN_BYTES=32 was not found in compile commands")
+print("EIGEN_MAX_ALIGN_BYTES=32 found in compile commands")
+PY
 ```
 
 Expected: alignment override is present only when explicitly requested.
@@ -736,19 +714,17 @@ TEST(EigenConfig, EigenAlignmentOverrideIsOptional) {
 Append this test to `tests/math/test_eigen_config.cpp`:
 
 ```cpp
-TEST(EigenConfig, MklNoDirectCallOnlyAppliesToMklBackend) {
-#if defined(PGO_EIGEN_ACCELERATION_MKL)
-    #if defined(EIGEN_MKL_NO_DIRECT_CALL)
-        SUCCEED();
+TEST(EigenConfig, MklNoDirectCallIsOptInAndScopedToMklBackend) {
+    // 默认 PGO_EIGEN_MKL_NO_DIRECT_CALL=OFF：无论 MKL 是否启用，EIGEN_MKL_NO_DIRECT_CALL 都不应被定义。
+    // 如果未来在 CI 里 opt-in，需要把这个测试改成读 cmake 注入的 PGO_EIGEN_MKL_NO_DIRECT_CALL 配置宏并分支检查。
+#if defined(EIGEN_MKL_NO_DIRECT_CALL)
+    #if defined(PGO_EIGEN_ACCELERATION_MKL)
+        SUCCEED() << "MKL backend explicitly opted into EIGEN_MKL_NO_DIRECT_CALL";
     #else
-        FAIL() << "MKL backend should define EIGEN_MKL_NO_DIRECT_CALL by default";
+        FAIL() << "EIGEN_MKL_NO_DIRECT_CALL must not leak outside the MKL backend";
     #endif
 #else
-    #if defined(EIGEN_MKL_NO_DIRECT_CALL)
-        FAIL() << "EIGEN_MKL_NO_DIRECT_CALL should not be defined outside the MKL backend";
-    #else
-        SUCCEED();
-    #endif
+    SUCCEED() << "default configuration keeps Eigen direct-MKL-call path enabled";
 #endif
 }
 ```
@@ -828,18 +804,32 @@ target_include_directories(pgo_parallel_runtime PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(pgo_parallel_runtime PUBLIC pgo::parallel)
+
+if(PGO_ENABLE_TBB)
+    target_link_libraries(pgo_parallel_runtime PUBLIC TBB::tbb)
+    target_compile_definitions(pgo_parallel_runtime PUBLIC PGO_ENABLE_TBB)
+endif()
 ```
 
-Add this to top-level `CMakeLists.txt` after `add_subdirectory(src/log)`:
+PUBLIC link + PUBLIC define 让所有透过 `pgo::core` 间接拿到 `pgo::parallel_runtime` 的 target（examples、tests、benchmarks、c_api 等）在编译 `parallel_for.hpp` 时都能看见 `PGO_ENABLE_TBB` macro 和 TBB 头。
+
+在顶层 `CMakeLists.txt` 中**无条件**追加（紧跟现有 `add_subdirectory(src/log)` 之后；TBB OFF 时也要存在以便 serial fallback）：
 
 ```cmake
 add_subdirectory(src/parallel)
 ```
 
+并把 `pgo_core` 的 `target_link_libraries` 扩展为透明 INTERFACE 依赖 `pgo::parallel_runtime`，让上层 solver/integrator/examples 不必单独 link：
+
+```cmake
+target_link_libraries(pgo_core INTERFACE pgo::eigen_config pgo::project_options pgo::parallel_runtime)
+```
+
+注意原 line 32 的 `pgo_project_warnings`/`pgo_project_sanitizers` 链接保持不变。
+
 - [ ] **Step 3: Implement serial/TBB runtime state**
 
-Create `src/parallel/runtime.cpp`:
+Create `src/parallel/runtime.cpp`：`runtime_thread_count` 用 `std::atomic<int>` 直接读写，mutex 只保护 `global_control` 的 `unique_ptr` 重建（避免热路径每次 `parallel_for` 取 thread count 时加锁）：
 
 ```cpp
 #include <pgo/parallel/runtime.hpp>
@@ -848,6 +838,7 @@ Create `src/parallel/runtime.cpp`:
 #include <oneapi/tbb/global_control.h>
 #endif
 
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -855,10 +846,10 @@ Create `src/parallel/runtime.cpp`:
 namespace pgo::parallel {
 namespace {
 
-std::mutex runtime_mutex;
-int runtime_thread_count = 0;
+std::atomic<int> runtime_thread_count{0};
 
 #if defined(PGO_ENABLE_TBB)
+std::mutex global_control_mutex;
 std::unique_ptr<oneapi::tbb::global_control> runtime_global_control;
 #endif
 
@@ -877,10 +868,10 @@ void set_thread_count(int thread_count) {
         throw std::invalid_argument("pgo::parallel::set_thread_count requires a non-negative thread count");
     }
 
-    std::lock_guard<std::mutex> lock(runtime_mutex);
-    runtime_thread_count = thread_count;
+    runtime_thread_count.store(thread_count, std::memory_order_release);
 
 #if defined(PGO_ENABLE_TBB)
+    std::lock_guard<std::mutex> lock(global_control_mutex);
     runtime_global_control.reset();
     if (thread_count > 0) {
         runtime_global_control = std::make_unique<oneapi::tbb::global_control>(
@@ -891,8 +882,7 @@ void set_thread_count(int thread_count) {
 }
 
 int configured_thread_count() noexcept {
-    std::lock_guard<std::mutex> lock(runtime_mutex);
-    return runtime_thread_count;
+    return runtime_thread_count.load(std::memory_order_acquire);
 }
 
 } // namespace pgo::parallel
@@ -917,7 +907,7 @@ git diff -- CMakeLists.txt include/pgo/parallel/runtime.hpp src/parallel/CMakeLi
 git status --short CMakeLists.txt include/pgo/parallel/runtime.hpp src/parallel/CMakeLists.txt src/parallel/runtime.cpp
 ```
 
-Expected: only the intended runtime API, runtime implementation, and source subdirectory changes appear.
+Expected: 顶层 `CMakeLists.txt` 显示 `add_subdirectory(src/parallel)` 新增 + `pgo_core` 的 `target_link_libraries(INTERFACE ...)` 加上 `pgo::parallel_runtime`；新建文件 runtime.hpp / src/parallel/CMakeLists.txt / src/parallel/runtime.cpp 出现；没有 INTERFACE `pgo::parallel` 残留。
 
 ### Task 4.2: Add parallel_for wrapper
 
@@ -979,15 +969,24 @@ void parallel_for(Index begin, Index end, Func&& func) {
 } // namespace pgo::parallel
 ```
 
-- [ ] **Step 2: Build a target that consumes the header indirectly**
+- [ ] **Step 2: Defer header compile-check to Phase 5 tests**
 
-Run:
+`parallel_for.hpp` 是模板头，`runtime.cpp` 不会 include 它，所以单 build `pgo_parallel_runtime` 不能验证语法。真正的 compile-check 留给 Phase 5 的 `tests/parallel/test_parallel_for.cpp`（它直接 `#include <pgo/parallel/parallel_for.hpp>`）。
+
+如果想在 Phase 4 阶段就提早 catch 语法错误，可以快速做一次：
 
 ```bash
-cmake --build --preset release --target pgo_parallel_runtime
+cat > /tmp/pgo_parallel_for_probe.cpp <<'CPP'
+#include <pgo/parallel/parallel_for.hpp>
+int main() {
+    pgo::parallel::parallel_for(0, 4, [](int){});
+    return 0;
+}
+CPP
+${CXX:-c++} -std=c++23 -Iinclude -fsyntax-only /tmp/pgo_parallel_for_probe.cpp
 ```
 
-Expected: build succeeds.
+Expected: 命令静默退出（`-fsyntax-only` 不产物，只做 parse + sema）。TBB ON 模式想 catch `oneapi/tbb/*.h` 的 include 路径，要把 conan toolchain 的 include dir 也 `-I` 进去；省事的做法直接跳到 Phase 5 跑测试。
 
 - [ ] **Step 3: Inspect changed files**
 
@@ -999,6 +998,92 @@ git status --short include/pgo/parallel/parallel_for.hpp
 ```
 
 Expected: only the intended `parallel_for` wrapper change appears.
+
+### Task 4.3: Bundle TBB shared library into pypgo wheels
+
+**Files:**
+- Modify: `src/python/CMakeLists.txt`
+
+`pypgo-release-all` / `pypgo-release-accel-all` 通过 `all-opt` 间接打开 `PGO_ENABLE_TBB`。wheel 必须把 TBB 动态库随 `_pgo_ext` 一起打进去，并设好 RPATH/loader path，否则 `import pgo` 在没装系统 TBB 的机器上会报 missing library。
+
+- [ ] **Step 1: Install TBB runtime alongside `_pgo_ext`**
+
+在 `src/python/CMakeLists.txt` 末尾追加（gate 在 `PGO_BUILD_PYTHON AND PGO_ENABLE_TBB`）：
+
+```cmake
+if(PGO_ENABLE_TBB)
+    install(IMPORTED_RUNTIME_ARTIFACTS TBB::tbb
+        RUNTIME DESTINATION pgo
+        LIBRARY DESTINATION pgo
+        COMPONENT python
+    )
+endif()
+```
+
+`IMPORTED_RUNTIME_ARTIFACTS` 跨平台行为：macOS 安装 `.dylib`，Linux 安装 `.so`，Windows 安装 `.dll`，路径都进 wheel 里的 `pgo/`。
+
+- [ ] **Step 2: Confirm `_pgo_ext` RPATH already resolves to `pgo/`**
+
+`src/python/CMakeLists.txt:59-69` 现有逻辑已经给 `${PGO_PYTHON_EXTENSION_NAME}` 设置好：
+
+- macOS：`BUILD_RPATH` / `INSTALL_RPATH` = `@loader_path`
+- Linux/其它 UNIX：`BUILD_RPATH` / `INSTALL_RPATH` = `$ORIGIN`
+- Windows：不需要 RPATH，Python 3.8+ DLL search path 默认包含 extension 自己所在的目录
+
+所以这一步**不需要新增代码**，只在 Step 1 之前确认这段 `set_target_properties` 没被改动；如果未来有人精简了 RPATH 逻辑，TBB 打包会同步失效，这里是排错锚点。
+
+- [ ] **Step 3: Verify bundled TBB shows up in the built wheel**
+
+Run:
+
+```bash
+uv run python scripts/pgo_build_wheel.py pypgo-release-all --clear
+uv run python - <<'PY'
+import zipfile, pathlib, sys
+wheels = sorted(pathlib.Path("dist/pypgo-release-all").glob("*.whl"))
+if not wheels:
+    sys.exit("no wheel built")
+with zipfile.ZipFile(wheels[-1]) as z:
+    members = z.namelist()
+ext = [m for m in members if "_pgo_ext" in m]
+tbb = [m for m in members if "tbb" in m.lower() and m.startswith("pgo/")]
+print("ext:", ext)
+print("tbb:", tbb)
+if not ext:
+    sys.exit("_pgo_ext is missing from the wheel")
+if not tbb:
+    sys.exit("TBB runtime library is not bundled inside pgo/")
+print("TBB runtime is bundled alongside _pgo_ext")
+PY
+```
+
+Expected: 脚本打印 `TBB runtime is bundled alongside _pgo_ext`，wheel 内 `pgo/` 目录里能看到 TBB 动态库。
+
+- [ ] **Step 4: Sanity check `import pgo` against the installed wheel**
+
+Run（在一个不安装 TBB 的临时 venv 中）：
+
+```bash
+uv venv build/tbb-bundle-probe
+uv pip install --python build/tbb-bundle-probe/bin/python "dist/pypgo-release-all"/*.whl
+build/tbb-bundle-probe/bin/python -c "import pgo; print(pgo.__file__)"
+```
+
+Expected: import 成功，输出 wheel 里的 `pgo/__init__.py` 路径；没有 `library not loaded` 之类的报错。Linux/macOS 上如果失败，多半是 RPATH 没生效，按顺序回头确认：
+1. `src/python/CMakeLists.txt:59-69` 的 `INSTALL_RPATH = @loader_path / $ORIGIN` 块仍然存在；
+2. scikit-build 的 install 阶段确实执行了 `IMPORTED_RUNTIME_ARTIFACTS TBB::tbb`（用 Step 3 的 zipfile 脚本核对 wheel 内容）；
+3. 用 `otool -l _pgo_ext*.so | grep -A2 LC_RPATH`（macOS）或 `readelf -d _pgo_ext*.so | grep RUNPATH`（Linux）查 wheel 内 extension 的 RPATH 字段是否真的被写进二进制。
+
+- [ ] **Step 5: Inspect changed files**
+
+Run:
+
+```bash
+git diff -- src/python/CMakeLists.txt
+git status --short src/python/CMakeLists.txt
+```
+
+Expected: 只增加 `if(PGO_ENABLE_TBB) install(IMPORTED_RUNTIME_ARTIFACTS TBB::tbb ...)` 这一段；RPATH 块保持原样不动。
 
 ## Phase 5: Tests
 
@@ -1024,13 +1109,28 @@ Create `tests/parallel/test_parallel_for.cpp`:
 
 namespace {
 
-TEST(ParallelFor, EmptyRangeDoesNothing) {
+// 用 fixture + TearDown 把 thread count 还原为 0，避免一个 case 改了全局 runtime 影响后续 case；
+// gtest_discover_tests 不保证执行顺序，所以每个 case 都假定起点是默认状态。
+class ParallelFixture : public ::testing::Test {
+protected:
+    void SetUp() override {
+        pgo::parallel::set_thread_count(0);
+    }
+    void TearDown() override {
+        pgo::parallel::set_thread_count(0);
+    }
+};
+
+using ParallelFor = ParallelFixture;
+using ParallelRuntime = ParallelFixture;
+
+TEST_F(ParallelFor, EmptyRangeDoesNothing) {
     int count = 0;
     pgo::parallel::parallel_for(5, 5, [&](int) { ++count; });
     EXPECT_EQ(count, 0);
 }
 
-TEST(ParallelFor, VisitsEachIndexOnce) {
+TEST_F(ParallelFor, VisitsEachIndexOnce) {
     std::vector<int> visits(128, 0);
     pgo::parallel::set_thread_count(1);
 
@@ -1043,11 +1143,11 @@ TEST(ParallelFor, VisitsEachIndexOnce) {
     }
 }
 
-TEST(ParallelRuntime, RejectsNegativeThreadCount) {
+TEST_F(ParallelRuntime, RejectsNegativeThreadCount) {
     EXPECT_THROW(pgo::parallel::set_thread_count(-1), std::invalid_argument);
 }
 
-TEST(ParallelRuntime, StoresConfiguredThreadCount) {
+TEST_F(ParallelRuntime, StoresConfiguredThreadCount) {
     pgo::parallel::set_thread_count(0);
     EXPECT_EQ(pgo::parallel::configured_thread_count(), 0);
 
@@ -1086,17 +1186,18 @@ add_executable(pgo_tests
 )
 ```
 
-Link `pgo::parallel_runtime` into `pgo_tests`:
+`pgo_tests` 已经 PRIVATE 链接 `pgo::core`，而 `pgo::core` 在 Phase 4 之后 INTERFACE 透传 `pgo::parallel_runtime`，所以 link 列表**不需要再加** `pgo::parallel_runtime`，保持现有：
 
 ```cmake
 target_link_libraries(pgo_tests
     PRIVATE
         pgo::core
         pgo::io
-        pgo::parallel_runtime
         GTest::gtest_main
 )
 ```
+
+如果以后某个测试 binary 只想链 `pgo::parallel_runtime` 而不要 `pgo::core`，再单独加。
 
 - [ ] **Step 3: Run tests without TBB**
 
@@ -1118,7 +1219,7 @@ git diff -- tests/CMakeLists.txt tests/parallel/test_parallel_for.cpp
 git status --short tests/CMakeLists.txt tests/parallel/test_parallel_for.cpp
 ```
 
-Expected: only the intended serial fallback tests and test target link changes appear.
+Expected: `tests/CMakeLists.txt` 只在 `pgo_tests` 源文件列表里多一行 `parallel/test_parallel_for.cpp`，`target_link_libraries` 块**不动**（pgo::parallel_runtime 通过 pgo::core 透传）；`tests/parallel/test_parallel_for.cpp` 新文件包含 `ParallelFixture` + 四个 TEST_F case。
 
 ### Task 5.2: Add TBB-enabled test coverage
 
@@ -1127,10 +1228,10 @@ Expected: only the intended serial fallback tests and test target link changes a
 
 - [ ] **Step 1: Add TBB backend assertions**
 
-Append these tests to `tests/parallel/test_parallel_for.cpp`:
+把下面两个 case **插入 Task 5.1 Step 1 的匿名 namespace 里**（紧贴 `TEST_F(ParallelRuntime, StoresConfiguredThreadCount)` 之后、`} // namespace` 之前）；`ParallelFor` / `ParallelRuntime` 别名只在那个 namespace 内可见，写到文件末尾会编不过。
 
 ```cpp
-TEST(ParallelRuntime, ReportsCompiledBackend) {
+TEST_F(ParallelRuntime, ReportsCompiledBackend) {
 #if defined(PGO_ENABLE_TBB)
     EXPECT_TRUE(pgo::parallel::is_tbb_enabled());
 #else
@@ -1138,7 +1239,7 @@ TEST(ParallelRuntime, ReportsCompiledBackend) {
 #endif
 }
 
-TEST(ParallelFor, DefaultThreadCountProducesCorrectReduction) {
+TEST_F(ParallelFor, DefaultThreadCountProducesCorrectReduction) {
     pgo::parallel::set_thread_count(0);
 
     std::vector<int> values(4096, 0);
@@ -1256,7 +1357,7 @@ BENCHMARK(benchmark_particle_update)
 
 - [ ] **Step 2: Wire benchmark source**
 
-Modify `benchmarks/CMakeLists.txt`:
+Modify `benchmarks/CMakeLists.txt`（`pgo::parallel_runtime` 通过 `pgo::core` 透传，不需要重复 link）：
 
 ```cmake
 add_executable(pgo_benchmarks
@@ -1267,7 +1368,6 @@ add_executable(pgo_benchmarks
 target_link_libraries(pgo_benchmarks
     PRIVATE
         pgo::core
-        pgo::parallel_runtime
         benchmark::benchmark
 )
 ```
@@ -1319,9 +1419,12 @@ Add this section:
 ```markdown
 ## TBB Parallel Runtime
 
-`PGO_ENABLE_TBB` enables the optional `pgo::parallel` backend. Code that needs
-task parallelism should link `pgo::parallel_runtime` and include
-`<pgo/parallel/parallel_for.hpp>`.
+`PGO_ENABLE_TBB` enables the `pgo::parallel_runtime` backend.
+`pgo::core` already links it transitively, so any consumer of `pgo::core`
+(examples, solver, integrator, c_api, python ext) can include
+`<pgo/parallel/parallel_for.hpp>` and call `pgo::parallel::parallel_for(...)`
+without an extra `target_link_libraries` line. With `PGO_ENABLE_TBB=OFF` the
+same call resolves to a serial fallback.
 
 Compile-time:
 
@@ -1342,6 +1445,10 @@ Threading policy:
 - Use TBB for outer simulation loops such as particles, springs, elements, and contact pairs.
 - Keep Eigen/BLAS acceleration controlled by the `-accel` presets.
 - Avoid nested oversubscription: do not blindly combine TBB outer loops with multi-threaded BLAS kernels in the same hot path.
+
+Python wheels (`pypgo-release-all`, `pypgo-release-accel-all`) bundle the TBB
+shared library inside the `pgo/` package directory with `@loader_path`/`$ORIGIN`
+RPATH, so `import pgo` works on machines without a system-wide TBB install.
 ```
 
 - [ ] **Step 2: Inspect changed files**
@@ -1397,19 +1504,15 @@ Expected: benchmark runs and reports `ParallelParticleUpdate` rows.
 Run:
 
 ```bash
-node - <<'NODE'
-const fs = require('fs');
-const commands = JSON.parse(fs.readFileSync('build/release-all/compile_commands.json', 'utf8'));
-const hit = commands.some((entry) => {
-  const command = entry.command || entry.arguments.join(' ');
-  return command.includes('PGO_ENABLE_TBB') && entry.file.includes('/parallel/');
-});
-if (!hit) {
-  console.error('PGO_ENABLE_TBB was not found in parallel compile commands');
-  process.exit(1);
-}
-console.log('PGO_ENABLE_TBB found in parallel compile commands');
-NODE
+uv run python - <<'PY'
+import json, sys
+commands = json.loads(open("build/release-all/compile_commands.json").read())
+def args(e): return e.get("command") or " ".join(e.get("arguments", []))
+hit = any("PGO_ENABLE_TBB" in args(e) and "/parallel/" in e.get("file", "") for e in commands)
+if not hit:
+    sys.exit("PGO_ENABLE_TBB was not found in parallel compile commands")
+print("PGO_ENABLE_TBB found in parallel compile commands")
+PY
 ```
 
 Expected: script prints `PGO_ENABLE_TBB found in parallel compile commands`.
@@ -1419,49 +1522,39 @@ Expected: script prints `PGO_ENABLE_TBB found in parallel compile commands`.
 Run:
 
 ```bash
-node - <<'NODE'
-const fs = require('fs');
-const commands = JSON.parse(fs.readFileSync('build/release-all/compile_commands.json', 'utf8'));
-const eigenUsers = commands.filter((entry) => {
-  const command = entry.command || entry.arguments.join(' ');
-  return command.includes('PGO_EIGEN_ACCELERATION') || command.includes('EIGEN_USE_BLAS') || command.includes('EIGEN_USE_MKL_ALL');
-});
-if (!eigenUsers.every((entry) => (entry.command || entry.arguments.join(' ')).includes('EIGEN_DONT_PARALLELIZE'))) {
-  console.error('EIGEN_DONT_PARALLELIZE missing from at least one Eigen compile command');
-  process.exit(1);
-}
-if (eigenUsers.some((entry) => (entry.command || entry.arguments.join(' ')).includes('EIGEN_MAX_ALIGN_BYTES='))) {
-  console.error('EIGEN_MAX_ALIGN_BYTES should not be defined unless explicitly requested');
-  process.exit(1);
-}
-console.log('Eigen threading policy is present and alignment override is absent by default');
-NODE
+uv run python - <<'PY'
+import json, sys
+commands = json.loads(open("build/release-all/compile_commands.json").read())
+def args(e): return e.get("command") or " ".join(e.get("arguments", []))
+eigen_users = [e for e in commands if any(tok in args(e) for tok in ("PGO_EIGEN_ACCELERATION", "EIGEN_USE_BLAS", "EIGEN_USE_MKL_ALL"))]
+if not all("EIGEN_DONT_PARALLELIZE" in args(e) for e in eigen_users):
+    sys.exit("EIGEN_DONT_PARALLELIZE missing from at least one Eigen compile command")
+if any("EIGEN_MAX_ALIGN_BYTES=" in args(e) for e in eigen_users):
+    sys.exit("EIGEN_MAX_ALIGN_BYTES should not be defined unless explicitly requested")
+print("Eigen threading policy is present and alignment override is absent by default")
+PY
 ```
 
 Expected: script prints `Eigen threading policy is present and alignment override is absent by default`.
 
-- [ ] **Step 6: Inspect final working tree**
+- [ ] **Step 6: Inspect MSVC project options policy**
 
 Run:
 
 ```bash
-node - <<'NODE'
-const fs = require('fs');
-const text = fs.readFileSync('cmake/pgo_project_options.cmake', 'utf8');
-if (!text.includes('set(PGO_MSVC_ARCH "DEFAULT"')) {
-  console.error('PGO_MSVC_ARCH default option is missing');
-  process.exit(1);
-}
-if (!text.includes('/MP') || !text.includes('/bigobj') || !text.includes('/Zc:__cplusplus')) {
-  console.error('MSVC engineering flags are missing');
-  process.exit(1);
-}
-if (!text.includes('PGO_MSVC_ARCH STREQUAL "AVX2"')) {
-  console.error('PGO_MSVC_ARCH=AVX2 mapping is missing');
-  process.exit(1);
-}
-console.log('MSVC project options policy is present');
-NODE
+uv run python - <<'PY'
+import sys
+text = open("cmake/pgo_project_options.cmake").read()
+if 'set(PGO_MSVC_ARCH "DEFAULT"' not in text:
+    sys.exit("PGO_MSVC_ARCH default option is missing")
+if any(flag not in text for flag in ("/MP", "/bigobj", "/Zc:__cplusplus")):
+    sys.exit("MSVC engineering flags are missing")
+if '"AVX2"' not in text:
+    sys.exit("PGO_MSVC_ARCH=AVX2 mapping is missing")
+if "PGO_ENABLE_NATIVE_ARCH" not in text or "_pgo_msvc_resolved_arch" not in text:
+    sys.exit("NATIVE_ARCH -> AVX2 fallback for MSVC DEFAULT is missing")
+print("MSVC project options policy is present")
+PY
 ```
 
 Expected: script prints `MSVC project options policy is present`.
@@ -1471,19 +1564,15 @@ Expected: script prints `MSVC project options policy is present`.
 Run:
 
 ```bash
-node - <<'NODE'
-const fs = require('fs');
-const text = fs.readFileSync('cmake/pgo_project_options.cmake', 'utf8');
-if (!text.includes('PGO_ENABLE_RELEASE_DEBUG_SYMBOLS')) {
-  console.error('PGO_ENABLE_RELEASE_DEBUG_SYMBOLS option is missing');
-  process.exit(1);
-}
-if (!text.includes('$<$<CONFIG:Release>:-g>') && !text.includes('$<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:CXX>>:-g>')) {
-  console.error('Release -g mapping is missing');
-  process.exit(1);
-}
-console.log('Release debug symbols policy is present');
-NODE
+uv run python - <<'PY'
+import sys
+text = open("cmake/pgo_project_options.cmake").read()
+if "PGO_ENABLE_RELEASE_DEBUG_SYMBOLS" not in text:
+    sys.exit("PGO_ENABLE_RELEASE_DEBUG_SYMBOLS option is missing")
+if "$<$<CONFIG:Release>:-g>" not in text and "$<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:CXX>>:-g>" not in text:
+    sys.exit("Release -g mapping is missing")
+print("Release debug symbols policy is present")
+PY
 ```
 
 Expected: script prints `Release debug symbols policy is present`.
@@ -1500,7 +1589,12 @@ Expected: source changes are visible for the user to review and commit manually;
 
 ## Self-Review
 
-- Spec coverage: The plan covers the requested first phase: build option, Conan option, `pgo::parallel` target, serial/TBB wrapper, runtime thread count, tests, benchmark, and docs.
-- Placeholder scan: The plan contains no unresolved placeholder tokens, no open-ended "handle later" steps, and each code step includes concrete snippets.
-- Type consistency: Public API names are consistent across tasks: `pgo::parallel::is_tbb_enabled`, `set_thread_count`, `configured_thread_count`, `serial_for`, and `parallel_for`.
-- Dependency boundary: `pgo::core` remains independent of TBB; only `pgo::parallel` / `pgo::parallel_runtime` carry the optional backend.
+- Spec coverage: build option, Conan option, MSVC project flag policy, Eigen threading/alignment policy, Release debug symbols, `pgo::parallel_runtime` STATIC target with serial/TBB wrapper, runtime thread count, wheel TBB bundling, tests with TEST_F teardown, benchmark, and docs.
+- Single target naming: only `pgo::parallel_runtime` (STATIC) exists; no INTERFACE `pgo::parallel` intermediate.
+- `pgo::core` INTERFACE-links `pgo::parallel_runtime`, so examples/solver/integrator/tests/benchmarks pick up `parallel_for` transitively without per-target link changes.
+- MSVC ISA resolution: explicit `AVX/AVX2/AVX512` wins; `DEFAULT + NATIVE_ARCH=ON` falls back to AVX2 to preserve legacy behavior; `DEFAULT + NATIVE_ARCH=OFF` keeps the compiler default for portable binaries.
+- Eigen policy: `EIGEN_DONT_PARALLELIZE` default ON; `EIGEN_MKL_NO_DIRECT_CALL` default OFF to avoid MKL perf regressions; `EIGEN_MAX_ALIGN_BYTES` opt-in only.
+- Wheel packaging: `pypgo-release-*` presets bundle TBB shared library next to `_pgo_ext` via `install(IMPORTED_RUNTIME_ARTIFACTS TBB::tbb)` + `@loader_path`/`$ORIGIN` RPATH.
+- Runtime thread state: `std::atomic<int>` for `runtime_thread_count`; mutex only protects `tbb::global_control` `unique_ptr` rebuild.
+- Verification scripts: all `compile_commands.json` inspections use `uv run python` (no Node toolchain assumed).
+- Test isolation: `ParallelFixture::SetUp/TearDown` resets thread count to 0 around every gtest case.

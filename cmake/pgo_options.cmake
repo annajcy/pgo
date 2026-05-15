@@ -10,6 +10,7 @@ option(PGO_WARNINGS_AS_ERRORS "Treat warnings as errors" OFF)
 option(PGO_ENABLE_GPU "Enable Vulkan/Slang GPU backend targets" OFF)
 option(PGO_ENABLE_SPDLOG "Enable spdlog-backed pgo::log sink" OFF)
 option(PGO_ENABLE_ALEMBIC "Enable Alembic .abc export support" OFF)
+option(PGO_ENABLE_TBB "Enable TBB-backed task parallelism" OFF)
 option(PGO_ENABLE_EIGEN_ACCELERATION "Enable Eigen BLAS/LAPACK acceleration" OFF)
 
 set(PGO_PYTHON_EXTENSION_NAME "_pgo_ext" CACHE STRING "Name of the private Python extension module")
@@ -17,3 +18,8 @@ set_property(CACHE PGO_PYTHON_EXTENSION_NAME PROPERTY STRINGS "_pgo_ext")
 
 set(PGO_EIGEN_ACCELERATION_BACKEND "AUTO" CACHE STRING "Eigen acceleration backend: AUTO, MKL, ACCELERATE, NONE")
 set_property(CACHE PGO_EIGEN_ACCELERATION_BACKEND PROPERTY STRINGS AUTO MKL ACCELERATE NONE)
+
+option(PGO_EIGEN_DONT_PARALLELIZE "Disable Eigen internal thread parallelism" ON)
+option(PGO_EIGEN_MKL_NO_DIRECT_CALL "Disable Eigen direct MKL calls when MKL acceleration is enabled" OFF)
+
+set(PGO_EIGEN_MAX_ALIGN_BYTES "" CACHE STRING "Override Eigen max alignment bytes; empty keeps Eigen default")

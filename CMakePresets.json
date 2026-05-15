@@ -42,7 +42,8 @@
       "hidden": true,
       "cacheVariables": {
         "PGO_ENABLE_SPDLOG": "ON",
-        "PGO_ENABLE_ALEMBIC": "ON"
+        "PGO_ENABLE_ALEMBIC": "ON",
+        "PGO_ENABLE_TBB": "ON"
       }
     },
     {

@@ -19,6 +19,7 @@ DEFAULT_PROFILE = pathlib.Path("conan/profiles/default")
 CMAKE_TO_CONAN_OPTIONS: dict[str, tuple[str, dict[str, str]]] = {
     "PGO_ENABLE_SPDLOG": ("enable_spdlog", {"ON": "True", "OFF": "False"}),
     "PGO_ENABLE_ALEMBIC": ("enable_alembic", {"ON": "True", "OFF": "False"}),
+    "PGO_ENABLE_TBB": ("enable_tbb", {"ON": "True", "OFF": "False"}),
 }
 
 
