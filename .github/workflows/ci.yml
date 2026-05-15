@@ -231,6 +231,7 @@ jobs:
           ${{ matrix.extra_config }}
 
       - name: Install wheel
+        shell: bash
         run: uv pip install "dist/${{ matrix.preset }}"/pgo-*.whl
 
       - name: Test Python API
