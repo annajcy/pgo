@@ -220,6 +220,7 @@ jobs:
         run: uv run python scripts/pgo_configure.py ${{ matrix.preset }} --profile ${{ matrix.profile }}
 
       - name: Build wheel
+        shell: bash
         env:
           CC: ${{ matrix.cc }}
           CXX: ${{ matrix.cxx }}
