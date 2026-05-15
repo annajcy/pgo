@@ -24,6 +24,7 @@ class CMakeConfigTest(unittest.TestCase):
         self.assertIn("mkl_core.2.dll", content)
         self.assertIn("libmkl_core.so.2", content)
         self.assertIn("libiomp5", content)
+        self.assertIn("cmake_path(CONVERT", content)
 
     def test_python_wheel_installs_tbb_runtime_artifacts(self) -> None:
         content = (REPO_ROOT / "src/python/CMakeLists.txt").read_text(encoding="utf-8")
