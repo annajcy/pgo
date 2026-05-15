@@ -17,7 +17,7 @@ class PgoRecipe(ConanFile):
         "enable_spdlog": False,
         "enable_alembic": False,
         "enable_tbb": False,
-        "hwloc/*:shared": False,
+        "hwloc/*:shared": True,
         "onetbb/*:shared": False,
     }
 
