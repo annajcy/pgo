@@ -70,6 +70,7 @@ class PgoConfigureTest(unittest.TestCase):
         self.assertEqual(plan.cmake_command, ["cmake", "--preset", "pypgo-release-all"])
         self.assertIn("&:enable_spdlog=True", plan.conan_command)
         self.assertIn("&:enable_alembic=True", plan.conan_command)
+        self.assertIn("&:enable_tbb=True", plan.conan_command)
 
     def test_python_package_accel_all_preset_uses_dedicated_conan_folder(self) -> None:
         plan = pgo_configure.create_plan(
@@ -85,6 +86,7 @@ class PgoConfigureTest(unittest.TestCase):
         self.assertEqual(plan.cmake_command, ["cmake", "--preset", "pypgo-release-accel-all"])
         self.assertIn("&:enable_spdlog=True", plan.conan_command)
         self.assertIn("&:enable_alembic=True", plan.conan_command)
+        self.assertIn("&:enable_tbb=True", plan.conan_command)
 
 
 if __name__ == "__main__":

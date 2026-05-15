@@ -17,6 +17,7 @@ class PgoRecipe(ConanFile):
         "enable_spdlog": False,
         "enable_alembic": False,
         "enable_tbb": False,
+        "hwloc/*:shared": True,
     }
 
     def generate(self):
