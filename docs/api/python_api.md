@@ -74,46 +74,33 @@ export OMP_NUM_THREADS=1
 ## Build Default Wheel
 
 ```bash
-python scripts/pgo_configure.py pypgo-release-all
-uv build --wheel \
-  -Ccmake.build-type=Release \
-  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release-all/conan_toolchain.cmake
-uv pip install dist/pgo-*.whl
+uv run python scripts/pgo_build_wheel.py pypgo-release-all --clear
+uv pip install dist/pypgo-release-all/pgo-*.whl
 uv run python -c "import pgo; print(pgo.World)"
 ```
+
+`uv build` does not apply `CMakePresets.json` inheritance by itself. The wheel
+wrapper prepares the selected package preset and forwards all resolved `PGO_*`
+cache variables to scikit-build, including the `-all` dependency toggles.
 
 ## Build Accelerated Wheel
 
 macOS:
 
 ```bash
-python scripts/pgo_configure.py pypgo-release-accel-all
-uv build --wheel \
-  -Ccmake.build-type=Release \
-  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release-accel-all/conan_toolchain.cmake \
-  -Ccmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON
+uv run python scripts/pgo_build_wheel.py pypgo-release-accel-all --clear
 ```
 
 Linux/Windows with MKL:
 
 ```bash
-python scripts/pgo_configure.py pypgo-release-accel-all
-uv build --wheel \
-  -Ccmake.build-type=Release \
-  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release-accel-all/conan_toolchain.cmake \
-  -Ccmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON \
-  -Ccmake.define.PGO_EIGEN_ACCELERATION_BACKEND=MKL
+uv run python scripts/pgo_build_wheel.py pypgo-release-accel-all --clear
 ```
 
 Stable-ABI release wheels use Python 3.12+ and an explicit wheel tag setting:
 
 ```bash
-python scripts/pgo_configure.py pypgo-release-all
-uv build --wheel \
-  -Cwheel.py-api=cp312 \
-  -Ccmake.build-type=Release \
-  -Ccmake.define.PGO_ENABLE_PYTHON_STABLE_ABI=ON \
-  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release-all/conan_toolchain.cmake
+uv run python scripts/pgo_build_wheel.py pypgo-release-all --stable-abi --clear
 ```
 
 If both default and accelerated wheels are published, use separate distribution names:
@@ -123,15 +110,24 @@ If both default and accelerated wheels are published, use separate distribution 
 
 Both packages import as `pgo`; do not install both in one environment.
 
+Use the release wrapper when building publishable distributions:
+
+```bash
+uv run python scripts/pgo_release_wheels.py --variant default --clear
+uv run python scripts/pgo_release_wheels.py --variant accel --clear
+uv run python scripts/pgo_release_wheels.py --all --clear
+```
+
+The release wrapper copies the source tree to a temporary directory before
+building. The repository `pyproject.toml` remains `name = "pgo"`; only the
+temporary accelerated tree is patched to `name = "pgo-accel"`.
+
 ## Wheel Smoke Tests
 
 Default release wheel:
 
 ```bash
-python scripts/pgo_configure.py pypgo-release-all
-uv build --wheel --out-dir dist/pypgo-release-all --clear \
-  -Ccmake.build-type=Release \
-  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release-all/conan_toolchain.cmake
+uv run python scripts/pgo_build_wheel.py pypgo-release-all --clear
 uv pip install --force-reinstall dist/pypgo-release-all/pgo-*.whl
 uv run python -c "import pgo; print(pgo.World)"
 uv run pytest tests/python -q
@@ -140,11 +136,7 @@ uv run pytest tests/python -q
 Accelerated release wheel on supported machines:
 
 ```bash
-python scripts/pgo_configure.py pypgo-release-accel-all
-uv build --wheel --out-dir dist/pypgo-release-accel-all --clear \
-  -Ccmake.build-type=Release \
-  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release-accel-all/conan_toolchain.cmake \
-  -Ccmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON
+uv run python scripts/pgo_build_wheel.py pypgo-release-accel-all --clear
 uv pip install --force-reinstall dist/pypgo-release-accel-all/pgo-*.whl
 uv run pytest tests/python -q
 ```

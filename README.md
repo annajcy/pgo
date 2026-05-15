@@ -206,10 +206,37 @@ uv run pytest tests/python -q
 Build a release wheel:
 
 ```bash
-python scripts/pgo_configure.py pypgo-release-all
-uv build --wheel -Ccmake.build-type=Release \
-  -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/pypgo-release-all/conan_toolchain.cmake
+uv run python scripts/pgo_build_wheel.py pypgo-release-all --clear
 ```
+
+`uv build` does not consume `CMakePresets.json` inheritance directly. The wheel
+wrapper prepares the matching Conan/CMake preset, then forwards the resolved
+`PGO_*` cache variables such as `PGO_ENABLE_SPDLOG=ON` and
+`PGO_ENABLE_ALEMBIC=ON` to scikit-build.
+
+Build release distributions:
+
+```bash
+uv run python scripts/pgo_release_wheels.py --variant default --clear
+uv run python scripts/pgo_release_wheels.py --variant accel --clear
+uv run python scripts/pgo_release_wheels.py --all --clear
+```
+
+The release wrapper builds from temporary source trees. The source
+`pyproject.toml` keeps `name = "pgo"`; the accelerated temporary tree is patched
+to publish the `pgo-accel` distribution while the import package remains `pgo`.
+Do not install `pgo` and `pgo-accel` in the same environment.
+
+Pass an explicit Conan profile when the default detected profile is not what
+you want (CI uses this; locally it is optional):
+
+```bash
+uv run python scripts/pgo_release_wheels.py --variant accel \
+  --profile conan/profiles/ubuntu-x86_64-gcc --clear
+```
+
+Use `--host-profile` / `--build-profile` instead of `--profile` if the host and
+build contexts need to differ. The flags are forwarded to `pgo_build_wheel.py`.
 
 ## Header Layout
 

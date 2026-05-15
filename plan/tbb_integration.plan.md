@@ -287,7 +287,14 @@ release-all
 release-accel-all
 release-all-asan
 release-accel-all-asan
+pypgo-release-all
+pypgo-release-accel-all
 ```
+
+The Python wheel wrapper (`uv run python scripts/pgo_build_wheel.py ...`) reads
+the resolved package preset and forwards every `PGO_*` cache variable to
+scikit-build, so adding `PGO_ENABLE_TBB=ON` to `all-opt` also makes the
+`pypgo-*` wheel commands pick up TBB without duplicating flags in the docs.
 
 - [ ] **Step 2: Document TBB as part of all presets**
 

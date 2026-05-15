@@ -158,18 +158,18 @@ jobs:
             | uv run python scripts/benchmark_summary.py
 
   python-api:
-    name: ${{ matrix.os }} ${{ matrix.preset }} python
+    name: ${{ matrix.os }} ${{ matrix.variant }} python
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest, preset: pypgo-release-all,       profile: conan/profiles/ubuntu-x86_64-gcc,       cc: gcc-13, cxx: g++-13, extra_config: "" }
-          - { os: ubuntu-latest, preset: pypgo-release-accel-all, profile: conan/profiles/ubuntu-x86_64-gcc,       cc: gcc-13, cxx: g++-13, extra_config: "-Ccmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON -Ccmake.define.PGO_EIGEN_ACCELERATION_BACKEND=MKL" }
-          - { os: macos-latest,   preset: pypgo-release-all,       profile: conan/profiles/macos-arm64-apple-clang, cc: cc,    cxx: c++,    extra_config: "" }
-          - { os: macos-latest,   preset: pypgo-release-accel-all, profile: conan/profiles/macos-arm64-apple-clang, cc: cc,    cxx: c++,    extra_config: "-Ccmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON" }
-          - { os: windows-latest, preset: pypgo-release-all,       profile: conan/profiles/windows-x86_64-msvc,     cc: cl,    cxx: cl,     extra_config: "" }
-          - { os: windows-latest, preset: pypgo-release-accel-all, profile: conan/profiles/windows-x86_64-msvc,     cc: cl,    cxx: cl,     extra_config: "-Ccmake.define.PGO_ENABLE_EIGEN_ACCELERATION=ON -Ccmake.define.PGO_EIGEN_ACCELERATION_BACKEND=MKL" }
+          - { os: ubuntu-latest,  variant: default, distribution: pgo,       profile: conan/profiles/ubuntu-x86_64-gcc,       cc: gcc-13, cxx: g++-13 }
+          - { os: ubuntu-latest,  variant: accel,   distribution: pgo-accel, profile: conan/profiles/ubuntu-x86_64-gcc,       cc: gcc-13, cxx: g++-13 }
+          - { os: macos-latest,   variant: default, distribution: pgo,       profile: conan/profiles/macos-arm64-apple-clang, cc: cc,    cxx: c++  }
+          - { os: macos-latest,   variant: accel,   distribution: pgo-accel, profile: conan/profiles/macos-arm64-apple-clang, cc: cc,    cxx: c++  }
+          - { os: windows-latest, variant: default, distribution: pgo,       profile: conan/profiles/windows-x86_64-msvc,     cc: cl,    cxx: cl   }
+          - { os: windows-latest, variant: accel,   distribution: pgo-accel, profile: conan/profiles/windows-x86_64-msvc,     cc: cl,    cxx: cl   }
     steps:
       - uses: actions/checkout@v4
 
@@ -199,11 +199,11 @@ jobs:
           uv sync
 
       - name: Install oneMKL (Linux)
-        if: contains(matrix.preset, 'accel') && runner.os == 'Linux'
+        if: matrix.variant == 'accel' && runner.os == 'Linux'
         run: bash scripts/install-onemkl/install-onemkl-linux.sh
 
       - name: Install oneMKL (Windows)
-        if: contains(matrix.preset, 'accel') && runner.os == 'Windows'
+        if: matrix.variant == 'accel' && runner.os == 'Windows'
         shell: pwsh
         run: .\scripts\install-onemkl\install-onemkl-windows.ps1
 
@@ -212,27 +212,20 @@ jobs:
         shell: bash
         run: echo "dir=$(uv run python -m nanobind --cmake_dir)" >> "$GITHUB_OUTPUT"
 
-      - name: Configure Python package preset
+      - name: Build release wheel
         env:
           CC: ${{ matrix.cc }}
           CXX: ${{ matrix.cxx }}
           nanobind_DIR: ${{ steps.nanobind.outputs.dir }}
-        run: uv run python scripts/pgo_configure.py ${{ matrix.preset }} --profile ${{ matrix.profile }}
-
-      - name: Build wheel
-        shell: bash
-        env:
-          CC: ${{ matrix.cc }}
-          CXX: ${{ matrix.cxx }}
         run: >
-          uv build --wheel --out-dir dist/${{ matrix.preset }} --clear
-          -Ccmake.build-type=Release
-          -Ccmake.args=-DCMAKE_TOOLCHAIN_FILE=build/conan/${{ matrix.preset }}/conan_toolchain.cmake
-          ${{ matrix.extra_config }}
+          uv run python scripts/pgo_release_wheels.py
+          --variant ${{ matrix.variant }}
+          --profile ${{ matrix.profile }}
+          --clear
 
       - name: Install wheel
         shell: bash
-        run: uv pip install "dist/${{ matrix.preset }}"/pgo-*.whl
+        run: uv pip install "dist/${{ matrix.distribution }}"/*.whl
 
       - name: Test Python API
         run: uv run pytest tests/python -q
