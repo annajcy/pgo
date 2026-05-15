@@ -32,7 +32,10 @@ $compilerBinDir = Join-Path $oneApiRoot "compiler\latest\bin"
 
 $requiredRuntimeDlls = @(
     "mkl_core.2.dll",
-    "mkl_def.2.dll",
+    "mkl_def.2.dll"
+)
+$optionalRuntimeDlls = @(
+    "mkl_rt.2.dll",
     "mkl_intel_lp64.2.dll",
     "mkl_intel_thread.2.dll",
     "libiomp5md.dll"
@@ -50,6 +53,16 @@ foreach ($runtimeDll in $requiredRuntimeDlls) {
         throw "Intel oneMKL runtime DLL was not found: $runtimeDll"
     }
     $discoveredRuntimeDirs += $runtimeFile.DirectoryName
+}
+foreach ($runtimeDll in $optionalRuntimeDlls) {
+    $runtimeFile = $runtimeSearchRoots |
+        ForEach-Object { Get-ChildItem -Path $_ -Recurse -Filter $runtimeDll -File -ErrorAction SilentlyContinue } |
+        Select-Object -First 1
+    if ($runtimeFile) {
+        $discoveredRuntimeDirs += $runtimeFile.DirectoryName
+    } else {
+        Write-Warning "Optional Intel oneMKL runtime DLL was not found: $runtimeDll"
+    }
 }
 
 $runtimeDirs = @(

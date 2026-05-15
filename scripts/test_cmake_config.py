@@ -54,6 +54,8 @@ class CMakeConfigTest(unittest.TestCase):
         content = (REPO_ROOT / "scripts/install-onemkl/install-onemkl-windows.ps1").read_text(encoding="utf-8")
 
         self.assertIn("mkl_def.2.dll", content)
+        self.assertIn("$optionalRuntimeDlls", content)
+        self.assertIn("Write-Warning", content)
         self.assertIn("Get-ChildItem -Path $_ -Recurse", content)
         self.assertIn("GITHUB_PATH", content)
 
