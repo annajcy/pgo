@@ -1,0 +1,5 @@
+add_executable(pgo_c_mass_spring_cloth mass_spring_cloth.c)
+target_link_libraries(pgo_c_mass_spring_cloth PRIVATE pgo::c_api)
+
+add_executable(pgo_c_mass_spring_bunny_cloth mass_spring_bunny_cloth.c)
+target_link_libraries(pgo_c_mass_spring_bunny_cloth PRIVATE pgo::c_api)

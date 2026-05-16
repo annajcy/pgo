@@ -16,6 +16,10 @@
 #include "pgo/io/obj_reader.hpp"
 #include "pgo/io/obj_writer.hpp"
 
+#if defined(PGO_ENABLE_ALEMBIC)
+#include "pgo/io/abc_writer.hpp"
+#endif
+
 #include <algorithm>
 #include <cstdint>
 #include <exception>
@@ -320,6 +324,33 @@ public:
         }
     }
 
+#if defined(PGO_ENABLE_ALEMBIC)
+    void write_abc_frame(const std::filesystem::path& output_path, double fps) const {
+        try {
+            if (!m_abc_writer || m_abc_writer_path != output_path) {
+                const auto nf = m_mesh.num_faces();
+                std::vector<std::uint32_t> face_indices;
+                face_indices.reserve(nf * 3);
+                std::vector<int> face_counts;
+                face_counts.reserve(nf);
+                for (std::size_t f = 0; f < nf; ++f) {
+                    for (std::size_t lv = 0; lv < 3; ++lv) {
+                        face_indices.push_back(
+                            static_cast<std::uint32_t>(m_mesh.face_vertex(f, lv)));
+                    }
+                    face_counts.push_back(3);
+                }
+                m_abc_writer_path = output_path;
+                m_abc_writer = std::make_unique<pgo::io::AbcWriter3d>(
+                    m_abc_writer_path, fps, face_indices, face_counts);
+            }
+            m_abc_writer->write_frame(m_mesh, m_state.u);
+        } catch (const std::exception& e) {
+            throw IoError{e.what()};
+        }
+    }
+#endif
+
 private:
     pgo::geometry::RestMesh<double, 3> m_mesh;
     pgo::dof::DofLayout<3> m_layout;
@@ -334,6 +365,10 @@ private:
     pgo::integrator::DynamicState<double> m_state;
     mutable std::filesystem::path m_writer_output_dir;
     mutable std::unique_ptr<pgo::io::ObjWriter3d> m_writer;
+#if defined(PGO_ENABLE_ALEMBIC)
+    mutable std::filesystem::path m_abc_writer_path;
+    mutable std::unique_ptr<pgo::io::AbcWriter3d> m_abc_writer;
+#endif
 };
 
 } // namespace
@@ -495,6 +530,30 @@ pgo_status_t pgo_world_write_obj_frame(
             throw std::invalid_argument{"world and output_dir must be non-null"};
         }
         world->impl->write_obj_frame(output_dir);
+        return PGO_STATUS_OK;
+    });
+}
+
+pgo_status_t pgo_world_write_abc_frame(
+    pgo_world_t* world,
+    const char* output_path,
+    double fps,
+    pgo_error_t* error) {
+    return call_c_api(error, [&]() -> pgo_status_t {
+        if (world == nullptr || output_path == nullptr) {
+            throw std::invalid_argument{"world and output_path must be non-null"};
+        }
+        if (!(fps > 0.0)) {
+            throw std::invalid_argument{"fps must be positive"};
+        }
+#if defined(PGO_ENABLE_ALEMBIC)
+        world->impl->write_abc_frame(output_path, fps);
+#else
+        (void)world;
+        (void)output_path;
+        (void)fps;
+        throw std::runtime_error{"Alembic export not available in this build"};
+#endif
         return PGO_STATUS_OK;
     });
 }

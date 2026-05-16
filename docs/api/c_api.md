@@ -47,6 +47,25 @@ int main(void) {
 }
 ```
 
+## Cookbook Examples
+
+The repository includes two C99 cookbook examples under `examples/c_api/`:
+
+- `mass_spring_cloth.c` — builds a cloth grid in memory, runs a mass-spring simulation, and writes OBJ frames. Self-contained; no external assets required.
+- `mass_spring_bunny_cloth.c` — loads a surface mesh via `pgo_world_create_mass_spring_from_obj`, supports `--pinned` and `--pinned-file` for optional vertex pinning, and writes OBJ frames. Requires an OBJ file.
+
+Both examples include only `pgo_c/pgo.h` and use the C99 ABI exclusively.
+
+Build and run:
+
+```bash
+cmake --build --preset debug --target pgo_c_mass_spring_cloth
+./build/debug/examples/c_api/pgo_c_mass_spring_cloth --frames 5 --resolution 8
+
+cmake --build --preset debug --target pgo_c_mass_spring_bunny_cloth
+./build/debug/examples/c_api/pgo_c_mass_spring_bunny_cloth --input assets/model/bunny.obj --frames 5
+```
+
 ## ABI Hygiene Checks
 
 ```bash

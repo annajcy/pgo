@@ -105,6 +105,12 @@ PGO_C_API pgo_status_t pgo_world_write_obj_frame(
     const char* output_dir,
     pgo_error_t* error);
 
+PGO_C_API pgo_status_t pgo_world_write_abc_frame(
+    pgo_world_t* world,
+    const char* output_path,
+    double fps,
+    pgo_error_t* error);
+
 #ifdef __cplusplus
 }
 #endif

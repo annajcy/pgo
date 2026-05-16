@@ -25,6 +25,22 @@ result = world.step()
 positions = world.positions()
 ```
 
+## Cookbook Examples
+
+The repository includes two Python cookbook examples under `examples/python/`:
+
+- `mass_spring_cloth.py` — recommended first example. Generates a cloth grid, runs a mass-spring simulation with `World.from_arrays`, and writes OBJ frames. Self-contained; no external assets needed.
+- `mass_spring_bunny_cloth.py` — loads a surface mesh via `World.from_obj`, supports `--pinned` and `--pinned-file` for optional vertex pinning, and writes OBJ frames. Requires an OBJ file.
+
+Both examples use only the public `pgo.World` API and do not import extension internals.
+
+Run:
+
+```bash
+uv run python examples/python/mass_spring_cloth.py --frames 5 --resolution 8
+uv run python examples/python/mass_spring_bunny_cloth.py --input assets/model/bunny.obj --frames 5
+```
+
 The API intentionally starts coarse-grained. Exposing individual energies, solvers,
 and Eigen-backed objects would make Python depend on C++ template internals and would
 weaken the ABI boundary.

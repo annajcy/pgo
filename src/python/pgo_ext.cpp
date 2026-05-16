@@ -3,6 +3,7 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/shared_ptr.h>
+#include <nanobind/stl/string.h>
 
 #include <cstdint>
 #include <memory>
@@ -172,6 +173,12 @@ void write_obj_frame(const std::shared_ptr<WorldHandle>& world, const std::strin
     throw_on_error(pgo_world_write_obj_frame(world->get(), output_dir.c_str(), &error), error);
 }
 
+void write_abc_frame(const std::shared_ptr<WorldHandle>& world, const std::string& output_path, double fps) {
+    pgo_error_t error;
+    pgo_error_clear(&error);
+    throw_on_error(pgo_world_write_abc_frame(world->get(), output_path.c_str(), fps, &error), error);
+}
+
 } // namespace
 
 NB_MODULE(_pgo_ext, m) {
@@ -184,4 +191,5 @@ NB_MODULE(_pgo_ext, m) {
     m.def("copy_positions", &copy_positions);
     m.def("step", &step);
     m.def("write_obj_frame", &write_obj_frame);
+    m.def("write_abc_frame", &write_abc_frame);
 }

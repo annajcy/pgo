@@ -231,6 +231,28 @@ Install the wheel with uv pip:
 uv pip install dist/pgo/*.whl
 ```
 
+## Examples
+
+C API examples build as standalone C99 executables linked to `pgo_c`:
+
+```bash
+cmake --build --preset debug --target pgo_c_mass_spring_cloth
+./build/debug/examples/c_api/pgo_c_mass_spring_cloth --frames 5 --resolution 8
+```
+
+Python examples use the public `pgo.World` API:
+
+```bash
+uv run python examples/python/mass_spring_cloth.py --frames 5 --resolution 8
+```
+
+Bunny OBJ examples require a local OBJ mesh and support `--pinned` / `--pinned-file`:
+
+```bash
+./build/debug/examples/c_api/pgo_c_mass_spring_bunny_cloth --input assets/model/bunny.obj --frames 5
+uv run python examples/python/mass_spring_bunny_cloth.py --input assets/model/bunny.obj --frames 5
+```
+
 ## Header Layout
 
 Numerical and simulation headers live under `include/pgo/core/`. Boundary modules

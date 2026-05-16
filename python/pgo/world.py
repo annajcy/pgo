@@ -96,3 +96,6 @@ class World:
 
     def write_obj_frame(self, output_dir: str) -> None:
         _pgo_ext.write_obj_frame(self._handle, output_dir)
+
+    def write_abc_frame(self, output_path: str, fps: float = 24.0) -> None:
+        _pgo_ext.write_abc_frame(self._handle, output_path, float(fps))

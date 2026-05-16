@@ -2235,6 +2235,17 @@ Expected: `_pgo_ext` can locate `pgo_c` from the installed package directory.
 8. Implement Phase 6 docs.
 9. Run Phase 7 verification matrix, including both `pypgo-*` wheel smoke commands.
 
+## Completion Criteria (Updated for Examples & Tests)
+
+- C API tests cover happy path and negative path categories (invalid mesh, null args, output buffer size, solver options, OBJ IO, IO error mapping).
+- Python API tests cover happy path, error path, OBJ input, frame output, and solver options.
+- C cloth example (`examples/c_api/mass_spring_cloth.c`) builds and runs in CTest smoke.
+- C bunny example (`examples/c_api/mass_spring_bunny_cloth.c`) builds and documents OBJ/pinned usage.
+- Python cloth example (`examples/python/mass_spring_cloth.py`) runs as a self-contained smoke test.
+- Python bunny example (`examples/python/mass_spring_bunny_cloth.py`) documents OBJ/pinned usage.
+- C/Python examples are referenced in README.md, `docs/api/c_api.md`, and `docs/api/python_api.md`.
+- No C ABI `size/version` fields are added in this phase.
+
 ## Self-Review
 
 - Spec coverage: C99 API split out from Milestone 1, nanobind Python API merged into this plan, dedicated `pypgo-release-all` / `pypgo-release-accel-all` presets included, uv install/build commands included, acceleration/MKL package policy included, symbol visibility/export-map policy included.
