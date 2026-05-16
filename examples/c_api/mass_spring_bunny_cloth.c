@@ -117,10 +117,8 @@ static int parse_pinned_file(const char* path, pinned_list_t* list) {
 }
 
 static void bunny_options_default(bunny_options_t* opts) {
-    memcpy(opts->input, "assets/model/bunny.obj", 22);
-    opts->input[21] = '\0';
-    memcpy(opts->output, "output/example/c_api/mass_spring/bunny", 39);
-    opts->output[38] = '\0';
+    snprintf(opts->input, sizeof(opts->input), "assets/model/bunny.obj");
+    snprintf(opts->output, sizeof(opts->output), "output/example/c_api/mass_spring/bunny");
     opts->abc_output[0] = '\0';
     opts->abc_fps = 24.0;
     opts->frames = 10;

@@ -57,8 +57,7 @@ static void cloth_options_default(cloth_options_t* opts) {
 
     opts->resolution = 8;
     opts->frames = 10;
-    memcpy(opts->output, "output/example/c_api/mass_spring/cloth", 40);
-    opts->output[39] = '\0';
+    snprintf(opts->output, sizeof(opts->output), "output/example/c_api/mass_spring/cloth");
     opts->abc_output[0] = '\0';
     opts->abc_fps = 24.0;
     opts->stiffness = params.stiffness;
