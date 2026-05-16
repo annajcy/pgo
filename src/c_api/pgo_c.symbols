@@ -10,3 +10,5 @@ _pgo_world_copy_positions
 _pgo_world_step
 _pgo_world_write_obj_frame
 _pgo_world_write_abc_frame
+_pgo_read_obj_mesh
+_pgo_obj_mesh_free

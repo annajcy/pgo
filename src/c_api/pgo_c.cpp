@@ -558,4 +558,61 @@ pgo_status_t pgo_world_write_abc_frame(
     });
 }
 
+pgo_status_t pgo_read_obj_mesh(
+    const char* path,
+    pgo_obj_mesh_t* out_mesh,
+    pgo_error_t* error) {
+    return call_c_api(error, [&]() -> pgo_status_t {
+        if (path == nullptr || out_mesh == nullptr) {
+            throw std::invalid_argument{"path and out_mesh must be non-null"};
+        }
+
+        const pgo::geometry::RestMesh<double, 3> mesh = [&]() {
+            try {
+                return pgo::io::read_obj_rest_mesh_3d(
+                    std::filesystem::path{path});
+            } catch (const std::exception& e) {
+                throw IoError{e.what()};
+            }
+        }();
+
+        const auto nv = mesh.num_vertices();
+        const auto nf = mesh.num_faces();
+        const std::size_t pos_count = nv * 3;
+        const std::size_t tri_count = nf * 3;
+
+        double* positions =
+            static_cast<double*>(std::malloc(pos_count * sizeof(double)));
+        std::uint64_t* triangles =
+            static_cast<std::uint64_t*>(std::malloc(tri_count * sizeof(std::uint64_t)));
+        if (positions == nullptr || triangles == nullptr) {
+            std::free(positions);
+            std::free(triangles);
+            throw std::bad_alloc{};
+        }
+
+        for (std::size_t i = 0; i < pos_count; ++i) {
+            positions[i] = mesh.rest_positions()[i];
+        }
+        for (std::size_t i = 0; i < tri_count; ++i) {
+            triangles[i] = static_cast<std::uint64_t>(mesh.face_indices()[i]);
+        }
+
+        out_mesh->positions_xyz = positions;
+        out_mesh->vertex_count = static_cast<std::uint64_t>(nv);
+        out_mesh->triangles = triangles;
+        out_mesh->triangle_count = static_cast<std::uint64_t>(nf);
+        return PGO_STATUS_OK;
+    });
+}
+
+void pgo_obj_mesh_free(pgo_obj_mesh_t* mesh) {
+    if (mesh != nullptr) {
+        std::free(mesh->positions_xyz);
+        std::free(mesh->triangles);
+        mesh->positions_xyz = nullptr;
+        mesh->triangles = nullptr;
+    }
+}
+
 } // extern "C"

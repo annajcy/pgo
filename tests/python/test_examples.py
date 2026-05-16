@@ -26,6 +26,32 @@ def test_make_cloth_grid() -> None:
     assert pinned.shape == (3,)
 
 
+def test_python_bunny_auto_pin_example_smoke(tmp_path: Path) -> None:
+    assets = Path(__file__).resolve().parents[2] / "assets/model/bunny.obj"
+    if not assets.exists():
+        import pytest
+        pytest.skip("bunny.obj not available")
+
+    script = (
+        Path(__file__).resolve().parents[2]
+        / "examples/python/mass_spring_bunny_auto_pin.py"
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--input", str(assets),
+            "--frames", "2",
+            "--output", str(tmp_path / "frames"),
+        ],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert any((tmp_path / "frames").glob("*.obj"))
+
+
 def test_python_cloth_example_smoke(tmp_path: Path) -> None:
     script = (
         Path(__file__).resolve().parents[2]

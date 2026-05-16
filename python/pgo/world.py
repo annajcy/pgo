@@ -99,3 +99,8 @@ class World:
 
     def write_abc_frame(self, output_path: str, fps: float = 24.0) -> None:
         _pgo_ext.write_abc_frame(self._handle, output_path, float(fps))
+
+
+def read_obj(path: str) -> tuple[np.ndarray, np.ndarray]:
+    vertices, triangles = _pgo_ext.read_obj_mesh(path)
+    return vertices, triangles

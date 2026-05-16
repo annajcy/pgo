@@ -413,6 +413,55 @@ static void test_write_obj_frame_io_error(void) {
     pgo_world_destroy(world);
 }
 
+static void test_read_obj_mesh_success(void) {
+    char path[512];
+    snprintf(path, sizeof(path), "%s/read_success.obj", test_tmpdir());
+    remove(path);
+    write_text_file(path,
+                    "v 0 0 0\n"
+                    "v 1 0 0\n"
+                    "v 0 1 0\n"
+                    "f 1 2 3\n");
+
+    pgo_error_t error;
+    pgo_obj_mesh_t mesh;
+    pgo_error_clear(&error);
+    expect_status(pgo_read_obj_mesh(path, &mesh, &error), PGO_STATUS_OK, &error);
+    assert(mesh.vertex_count == 3);
+    assert(mesh.triangle_count == 1);
+    assert(mesh.positions_xyz[3] == 1.0);   /* vertex 1, x */
+    assert(mesh.positions_xyz[7] == 1.0);   /* vertex 2, y */
+    assert(mesh.triangles[0] == 0);
+    assert(mesh.triangles[1] == 1);
+    assert(mesh.triangles[2] == 2);
+    pgo_obj_mesh_free(&mesh);
+}
+
+static void test_read_obj_mesh_missing_file(void) {
+    char path[512];
+    snprintf(path, sizeof(path), "%s/nonexistent_read.obj", test_tmpdir());
+
+    pgo_error_t error;
+    pgo_obj_mesh_t mesh;
+    pgo_error_clear(&error);
+    expect_status(
+        pgo_read_obj_mesh(path, &mesh, &error), PGO_STATUS_IO_ERROR, &error);
+}
+
+static void test_read_obj_mesh_null_args(void) {
+    pgo_error_t error;
+    pgo_obj_mesh_t mesh;
+    pgo_error_clear(&error);
+    expect_status(pgo_read_obj_mesh(NULL, &mesh, &error),
+                  PGO_STATUS_INVALID_ARGUMENT, &error);
+    expect_status(pgo_read_obj_mesh("unused", NULL, &error),
+                  PGO_STATUS_INVALID_ARGUMENT, &error);
+}
+
+static void test_obj_mesh_free_null_is_safe(void) {
+    pgo_obj_mesh_free(NULL);
+}
+
 /* ---- driver ---- */
 
 int main(void) {
@@ -426,5 +475,9 @@ int main(void) {
     test_from_obj_missing_file_returns_io_error();
     test_write_obj_frame_success();
     test_write_obj_frame_io_error();
+    test_read_obj_mesh_success();
+    test_read_obj_mesh_missing_file();
+    test_read_obj_mesh_null_args();
+    test_obj_mesh_free_null_is_safe();
     return 0;
 }

@@ -39,6 +39,13 @@ typedef struct pgo_mesh_view_t {
     uint64_t pinned_vertex_count;
 } pgo_mesh_view_t;
 
+typedef struct pgo_obj_mesh_t {
+    double* positions_xyz;
+    uint64_t vertex_count;
+    uint64_t* triangles;
+    uint64_t triangle_count;
+} pgo_obj_mesh_t;
+
 typedef struct pgo_mass_spring_params_t {
     double stiffness;
     double gravity;
@@ -110,6 +117,13 @@ PGO_C_API pgo_status_t pgo_world_write_abc_frame(
     const char* output_path,
     double fps,
     pgo_error_t* error);
+
+PGO_C_API pgo_status_t pgo_read_obj_mesh(
+    const char* path,
+    pgo_obj_mesh_t* out_mesh,
+    pgo_error_t* error);
+
+PGO_C_API void pgo_obj_mesh_free(pgo_obj_mesh_t* mesh);
 
 #ifdef __cplusplus
 }

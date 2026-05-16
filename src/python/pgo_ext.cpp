@@ -5,10 +5,15 @@
 #include <nanobind/stl/shared_ptr.h>
 #include <nanobind/stl/string.h>
 
+#include <Python.h>
+
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace nb = nanobind;
 
@@ -48,11 +53,29 @@ private:
     pgo_world_t* m_world = nullptr;
 };
 
+static nb::object g_pgo_invalid_argument_error;
+static nb::object g_pgo_io_error;
+static nb::object g_pgo_internal_error;
+
 void throw_on_error(const pgo_status_t status, const pgo_error_t& error) {
     if (status == PGO_STATUS_OK) {
         return;
     }
-    throw std::runtime_error(error.message[0] == '\0' ? "pgo C API call failed" : error.message);
+    const char* msg = error.message[0] == '\0' ? "pgo C API call failed" : error.message;
+    nb::object exc_type;
+    switch (status) {
+    case PGO_STATUS_INVALID_ARGUMENT:
+        exc_type = g_pgo_invalid_argument_error;
+        break;
+    case PGO_STATUS_IO_ERROR:
+        exc_type = g_pgo_io_error;
+        break;
+    default:
+        exc_type = g_pgo_internal_error;
+        break;
+    }
+    PyErr_SetObject(exc_type.ptr(), PyUnicode_FromString(msg));
+    throw nb::python_error();
 }
 
 using FloatArray = nb::ndarray<nb::numpy, const double, nb::shape<-1, 3>, nb::c_contig>;
@@ -179,10 +202,56 @@ void write_abc_frame(const std::shared_ptr<WorldHandle>& world, const std::strin
     throw_on_error(pgo_world_write_abc_frame(world->get(), output_path.c_str(), fps, &error), error);
 }
 
+nb::tuple read_obj_mesh(const std::string& path) {
+    pgo_obj_mesh_t mesh{};
+    pgo_error_t error;
+    pgo_error_clear(&error);
+    throw_on_error(pgo_read_obj_mesh(path.c_str(), &mesh, &error), error);
+
+    const auto nv = static_cast<size_t>(mesh.vertex_count);
+    const auto nt = static_cast<size_t>(mesh.triangle_count);
+
+    /* Wrap the C heap memory into ndarrays with capsule owners.
+       After ndarray construction, the capsule owns the memory;
+       pgo_obj_mesh_free must not free it. */
+    nb::capsule v_cap(mesh.positions_xyz,
+                      [](void* p) noexcept { std::free(p); });
+    nb::capsule t_cap(mesh.triangles,
+                      [](void* p) noexcept { std::free(p); });
+
+    size_t v_shape[2] = {nv, 3};
+    auto vertices = nb::ndarray<nb::numpy, double, nb::shape<-1, 3>>(
+        mesh.positions_xyz, 2, v_shape, std::move(v_cap));
+
+    size_t t_shape[2] = {nt, 3};
+    auto triangles = nb::ndarray<nb::numpy, std::uint64_t, nb::shape<-1, 3>>(
+        mesh.triangles, 2, t_shape, std::move(t_cap));
+
+    /* Transfer ownership to ndarrays -- clear mesh pointers so
+       pgo_obj_mesh_free is a no-op for the buffers */
+    mesh.positions_xyz = nullptr;
+    mesh.triangles = nullptr;
+    pgo_obj_mesh_free(&mesh);
+
+    return nb::make_tuple(vertices, triangles);
+}
+
 } // namespace
 
 NB_MODULE(_pgo_ext, m) {
     nb::class_<WorldHandle>(m, "WorldHandle");
+
+    g_pgo_invalid_argument_error = nb::borrow(
+        PyErr_NewException("pgo._pgo_ext.InvalidArgumentError",
+                           PyExc_RuntimeError, nullptr));
+    g_pgo_io_error = nb::borrow(
+        PyErr_NewException("pgo._pgo_ext.IOError", PyExc_RuntimeError, nullptr));
+    g_pgo_internal_error = nb::borrow(
+        PyErr_NewException("pgo._pgo_ext.InternalError",
+                           PyExc_RuntimeError, nullptr));
+    m.attr("InvalidArgumentError") = g_pgo_invalid_argument_error;
+    m.attr("IOError") = g_pgo_io_error;
+    m.attr("InternalError") = g_pgo_internal_error;
 
     m.def("version", &pgo_version);
     m.def("create_world_from_arrays", &create_world_from_arrays);
@@ -192,4 +261,5 @@ NB_MODULE(_pgo_ext, m) {
     m.def("step", &step);
     m.def("write_obj_frame", &write_obj_frame);
     m.def("write_abc_frame", &write_abc_frame);
+    m.def("read_obj_mesh", &read_obj_mesh);
 }
